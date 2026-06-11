@@ -1,0 +1,81 @@
+name: CD workflow
+
+on:
+  workflow_run:
+    workflows:
+      - CI workflow
+    types:
+      - completed
+    branches:
+      - develop
+
+jobs:
+  build:
+    name: Build, Push, and Deploy Docker Image
+    if: github.repository == 'SeCause/SeCause-Analysis' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Login DockerHub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build & Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ secrets.ANALYSIS_DOCKER_REPO }}:${{ github.sha }}
+            ${{ secrets.ANALYSIS_DOCKER_REPO }}:latest
+
+      - name: Deploy to server with Docker
+        uses: appleboy/ssh-action@master
+        env:
+          ANALYSIS_DOCKER_REPO: ${{ secrets.ANALYSIS_DOCKER_REPO }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: ANALYSIS_DOCKER_REPO
+          script: |
+            set -e
+            mkdir -p /home/ubuntu/app
+            cd /home/ubuntu/app
+
+            docker compose pull analysis-api analysis-worker analysis-redis
+            docker compose up -d analysis-redis
+            docker compose up -d --no-deps analysis-api analysis-worker
+
+            #  헬스 체크 (최대 30초 대기)
+            echo "Waiting for services to be healthy..."
+            for i in {1..30}; do
+              if curl -f http://localhost:8001/health > /dev/null 2>&1; then
+                echo "✅ Health check passed"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "❌ Health check failed, rolling back..."
+                docker compose down analysis-api analysis-worker
+                exit 1
+              fi
+              sleep 1
+            done
+
+            docker image prune -f
