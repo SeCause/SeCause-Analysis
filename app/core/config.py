@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     
     # Claude API
     CLAUDE_API_KEY: str
+
+    # Queue
+    REDIS_URL: str = "redis://localhost:6379/0"
+    ANALYSIS_QUEUE_NAME: str = "analysis"
     
     # Server
     HOST: str = "0.0.0.0"
