@@ -13,7 +13,7 @@ class EvidenceDocument(CamelModel):
 
 # Hybrid search 결과 형태를 고정하기 위한 stub 검색 함수
 def search_evidence(query: RagQuery) -> list[EvidenceDocument]:
-    if query.cwe_id is None:
+    if not query.cwe_id:
         return []
 
     return [

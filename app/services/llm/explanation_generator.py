@@ -10,6 +10,17 @@ class ExplanationResult(CamelModel):
     references: list[str]
 
 
+# 비어 있지 않은 참고 URL을 기존 순서대로 중복 없이 병합
+def merge_references(*reference_groups: list[str]) -> list[str]:
+    references = [
+        reference
+        for group in reference_groups
+        for reference in group
+        if reference
+    ]
+    return list(dict.fromkeys(references))
+
+
 # Claude API 없이 Finding에 넣을 mock 설명과 수정 가이드를 생성
 def generate_explanation(
     finding: Finding,
@@ -42,6 +53,9 @@ def enrich_finding_with_explanation(
     return finding.model_copy(
         update={
             "recommendation": explanation.recommendation,
-            "references": explanation.references,
+            "references": merge_references(
+                finding.references,
+                explanation.references,
+            ),
         }
     )
