@@ -13,24 +13,27 @@ class CamelModel(BaseModel):
     )
 
 
-class AnalysisRequestPayload(CamelModel):
+class AnalysisTargetPayload(CamelModel):
     analysis_id: int
     repository_id: int
     repository_url: str = Field(
         validation_alias=AliasChoices("repositoryUrl", "repository_url", "github_link"),
     )
     branch: str
+
+
+class AnalysisRequestPayload(AnalysisTargetPayload):
     github_token: SecretStr = Field(
         exclude=True,
         repr=False,
         validation_alias=AliasChoices("githubToken", "github_token"),
     )
 
-    def to_job_payload(self) -> dict:
+    def to_job_payload(self, github_token_reference: str) -> dict:
         return {
             "analysis_id": self.analysis_id,
             "repository_id": self.repository_id,
             "repository_url": self.repository_url,
             "branch": self.branch,
-            "github_token": self.github_token.get_secret_value(),
+            "github_token_reference": github_token_reference,
         }
