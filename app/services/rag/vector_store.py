@@ -1,3 +1,4 @@
+from collections import defaultdict
 from dataclasses import dataclass
 
 from app.services.rag.documents import RagDocumentChunk, RagSourceType
@@ -40,6 +41,8 @@ class SecurityDocumentVectorStore:
         if not rows:
             return 0
 
+        await self.delete_existing_rows(rows)
+
         query = get_sql_text()(
             """
             INSERT INTO public.security_documents (
@@ -76,6 +79,34 @@ class SecurityDocumentVectorStore:
             ],
         )
         return len(rows)
+
+    # 같은 source_type/title chunk 기존 row 삭제
+    async def delete_existing_rows(self, rows: list[SecurityDocumentRow]) -> int:
+        rows_by_source_type: dict[RagSourceType, set[str]] = defaultdict(set)
+        for row in rows:
+            rows_by_source_type[row.source_type].add(row.title)
+
+        deleted_count = 0
+        text, bindparam = get_sqlalchemy_text_and_bindparam()
+        query = text(
+            """
+            DELETE FROM public.security_documents
+            WHERE source_type = CAST(:source_type AS reference_type_enum)
+              AND title IN :titles
+            """
+        ).bindparams(bindparam("titles", expanding=True))
+
+        for source_type, titles in rows_by_source_type.items():
+            result = await self.session.execute(
+                query,
+                {
+                    "source_type": source_type.value,
+                    "titles": sorted(titles),
+                },
+            )
+            deleted_count += result.rowcount or 0
+
+        return deleted_count
 
 
 # chunk와 embedding 결과를 DB row로 매핑
@@ -126,3 +157,13 @@ def get_sql_text():
         raise VectorStoreError("sqlalchemy package is required for vector store") from exc
 
     return text
+
+
+# SQLAlchemy text/bindparam 지연 로딩
+def get_sqlalchemy_text_and_bindparam():
+    try:
+        from sqlalchemy import bindparam, text
+    except ImportError as exc:
+        raise VectorStoreError("sqlalchemy package is required for vector store") from exc
+
+    return text, bindparam

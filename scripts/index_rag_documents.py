@@ -7,7 +7,7 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.services.rag.chunker import chunk_documents
+from app.services.rag.chunker import chunk_documents, validate_chunk_options
 from app.services.rag.document_loader import load_cwe_documents, load_owasp_documents
 from app.services.rag.documents import RagDocumentChunk, RagSourceDocument, RagSourceType
 
@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reset-source",
         action="store_true",
-        help="Delete existing rows for indexed source types before inserting.",
+        help="Delete all existing rows for indexed source types before inserting.",
     )
     parser.add_argument(
         "--insert-batch-size",
@@ -72,7 +72,13 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_INSERT_BATCH_SIZE,
         help="Number of rows to insert per DB batch.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    try:
+        validate_chunk_options(args.max_chars, args.overlap_chars)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    return args
 
 
 # source 옵션에 맞는 원본 문서 로딩

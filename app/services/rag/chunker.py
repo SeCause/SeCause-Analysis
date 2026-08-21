@@ -14,6 +14,7 @@ def chunk_documents(
     max_chars: int = DEFAULT_MAX_CHARS,
     overlap_chars: int = DEFAULT_OVERLAP_CHARS,
 ) -> list[RagDocumentChunk]:
+    validate_chunk_options(max_chars, overlap_chars)
     chunks: list[RagDocumentChunk] = []
 
     for document in preprocess_documents(documents):
@@ -93,6 +94,7 @@ def split_text(
     max_chars: int = DEFAULT_MAX_CHARS,
     overlap_chars: int = DEFAULT_OVERLAP_CHARS,
 ) -> list[str]:
+    validate_chunk_options(max_chars, overlap_chars)
     content = content.strip()
     if not content:
         return []
@@ -134,6 +136,7 @@ def split_text(
 
 # 긴 문단 강제 분할
 def split_long_text(text: str, max_chars: int, overlap_chars: int) -> list[str]:
+    validate_chunk_options(max_chars, overlap_chars)
     chunks: list[str] = []
     start = 0
     step = max(max_chars - overlap_chars, 1)
@@ -152,3 +155,15 @@ def with_overlap(previous: str, overlap_chars: int, next_text: str) -> str:
 
     overlap = previous[-overlap_chars:].strip()
     return f"{overlap}\n\n{next_text}".strip() if overlap else next_text
+
+
+# chunk 길이 옵션 검증
+def validate_chunk_options(max_chars: int, overlap_chars: int) -> None:
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive")
+
+    if overlap_chars < 0:
+        raise ValueError("overlap_chars must be greater than or equal to 0")
+
+    if overlap_chars >= max_chars:
+        raise ValueError("overlap_chars must be less than max_chars")
