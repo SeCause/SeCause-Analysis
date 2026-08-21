@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# RAG source documents
+rag_documents/raw/
+rag_documents/processed/
