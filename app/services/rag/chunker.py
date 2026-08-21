@@ -1,6 +1,7 @@
 import re
 
 from app.services.rag.documents import RagDocumentChunk, RagSourceDocument, RagSourceType
+from app.services.rag.preprocessor import preprocess_chunks, preprocess_documents
 
 DEFAULT_MAX_CHARS = 4000
 DEFAULT_OVERLAP_CHARS = 300
@@ -15,7 +16,7 @@ def chunk_documents(
 ) -> list[RagDocumentChunk]:
     chunks: list[RagDocumentChunk] = []
 
-    for document in documents:
+    for document in preprocess_documents(documents):
         chunks.extend(
             chunk_document(
                 document,
@@ -24,7 +25,7 @@ def chunk_documents(
             )
         )
 
-    return chunks
+    return preprocess_chunks(chunks)
 
 
 # source 타입별 chunking 전략 선택
