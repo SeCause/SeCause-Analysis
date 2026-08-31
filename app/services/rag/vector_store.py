@@ -35,7 +35,7 @@ class SecurityDocumentVectorStore:
 
     # source_type 단위 기존 색인 삭제
     async def delete_by_source_type(self, source_type: RagSourceType) -> int:
-        query = get_sql_text()(
+        query = _get_sql_text()(
             """
             DELETE FROM public.security_documents
             WHERE source_type = CAST(:source_type AS reference_type_enum)
@@ -54,7 +54,7 @@ class SecurityDocumentVectorStore:
 
         await self.delete_existing_rows(rows)
 
-        query = get_sql_text()(
+        query = _get_sql_text()(
             """
             INSERT INTO public.security_documents (
                 title,
@@ -98,7 +98,7 @@ class SecurityDocumentVectorStore:
             rows_by_source_type[row.source_type].add(row.title)
 
         deleted_count = 0
-        text, bindparam = get_sqlalchemy_text_and_bindparam()
+        text, bindparam = _get_sqlalchemy_text_and_bindparam()
         query = text(
             """
             DELETE FROM public.security_documents
@@ -126,8 +126,8 @@ class SecurityDocumentVectorStore:
         limit: int,
     ) -> list[SecurityDocumentSearchResult]:
         
-        validate_search_limit(limit)
-        query = get_sql_text()(
+        _validate_search_limit(limit)
+        query = _get_sql_text()(
             """
             SELECT
                 security_document_id,
@@ -152,7 +152,7 @@ class SecurityDocumentVectorStore:
         )
 
         return [
-            build_search_result(row)
+            _build_search_result(row)
             for row in result.mappings()
         ]
 
@@ -162,12 +162,12 @@ class SecurityDocumentVectorStore:
         query_text: str,
         limit: int,
     ) -> list[SecurityDocumentSearchResult]:
-        validate_search_limit(limit)
+        _validate_search_limit(limit)
         query_text = query_text.strip()
         if not query_text:
             return []
 
-        query = get_sql_text()(
+        query = _get_sql_text()(
             """
             WITH search_query AS (
                 SELECT plainto_tsquery('english', :query_text) AS query
@@ -205,7 +205,7 @@ class SecurityDocumentVectorStore:
         )
 
         return [
-            build_search_result(row)
+            _build_search_result(row)
             for row in result.mappings()
         ]
 
@@ -223,7 +223,7 @@ def build_security_document_rows(
     return [
         SecurityDocumentRow(
             source_type=chunk.source_type,
-            title=build_chunk_title(chunk),
+            title=_build_chunk_title(chunk),
             content=chunk.content,
             embedding=embedding_result.embedding,
             url=chunk.url,
@@ -233,12 +233,12 @@ def build_security_document_rows(
 
 
 # chunk 위치를 title에 보존
-def build_chunk_title(chunk: RagDocumentChunk) -> str:
+def _build_chunk_title(chunk: RagDocumentChunk) -> str:
     return f"{chunk.title} [{chunk.source_id}#{chunk.chunk_index}]"
 
 
 # DB 검색 row를 내부 결과 모델로 변환
-def build_search_result(row) -> SecurityDocumentSearchResult:
+def _build_search_result(row) -> SecurityDocumentSearchResult:
     return SecurityDocumentSearchResult(
         security_document_id=row["security_document_id"],
         source_type=RagSourceType(row["source_type"]),
@@ -251,7 +251,7 @@ def build_search_result(row) -> SecurityDocumentSearchResult:
 
 
 # 검색 limit 검증
-def validate_search_limit(limit: int) -> None:
+def _validate_search_limit(limit: int) -> None:
     if limit <= 0:
         raise VectorStoreError("Search limit must be positive")
 
@@ -261,16 +261,16 @@ def to_vector_literal(embedding: list[float]) -> str:
     if not embedding:
         raise VectorStoreError("Embedding vector must not be empty")
 
-    return "[" + ",".join(format_vector_number(value) for value in embedding) + "]"
+    return "[" + ",".join(_format_vector_number(value) for value in embedding) + "]"
 
 
 # vector literal 숫자 포맷 정규화
-def format_vector_number(value: float) -> str:
+def _format_vector_number(value: float) -> str:
     return format(float(value), ".10g")
 
 
 # SQLAlchemy text 지연 로딩
-def get_sql_text():
+def _get_sql_text():
     try:
         from sqlalchemy import text
     except ImportError as exc:
@@ -280,7 +280,7 @@ def get_sql_text():
 
 
 # SQLAlchemy text/bindparam 지연 로딩
-def get_sqlalchemy_text_and_bindparam():
+def _get_sqlalchemy_text_and_bindparam():
     try:
         from sqlalchemy import bindparam, text
     except ImportError as exc:

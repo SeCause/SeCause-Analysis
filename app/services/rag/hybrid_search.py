@@ -60,20 +60,20 @@ async def search_evidence_async(query: RagQuery) -> list[EvidenceDocument]:
             store.search_by_fts(query.query_text, settings.RAG_FTS_TOP_K),
         )
 
-    ranked_results = merge_results_by_rrf(
+    ranked_results = _merge_results_by_rrf(
         vector_results=vector_results,
         fts_results=fts_results,
         rrf_k=settings.RAG_RRF_K,
     )
 
     return [
-        to_evidence_document(ranked_result)
+        _to_evidence_document(ranked_result)
         for ranked_result in ranked_results[: settings.RAG_RESULT_TOP_K]
     ]
 
 
 # RRF 방식으로 vector/FTS 결과 병합
-def merge_results_by_rrf(
+def _merge_results_by_rrf(
     vector_results: list[SecurityDocumentSearchResult],
     fts_results: list[SecurityDocumentSearchResult],
     rrf_k: int,
@@ -84,8 +84,8 @@ def merge_results_by_rrf(
     results_by_id: dict[int, SecurityDocumentSearchResult] = {}
     scores_by_id: dict[int, float] = {}
 
-    add_rrf_scores(vector_results, rrf_k, results_by_id, scores_by_id)
-    add_rrf_scores(fts_results, rrf_k, results_by_id, scores_by_id)
+    _add_rrf_scores(vector_results, rrf_k, results_by_id, scores_by_id)
+    _add_rrf_scores(fts_results, rrf_k, results_by_id, scores_by_id)
 
     return [
         RankedSearchResult(result=results_by_id[document_id], score=score)
@@ -98,7 +98,7 @@ def merge_results_by_rrf(
 
 
 # 검색 순위를 RRF 점수로 누적
-def add_rrf_scores(
+def _add_rrf_scores(
     results: list[SecurityDocumentSearchResult],
     rrf_k: int,
     results_by_id: dict[int, SecurityDocumentSearchResult],
@@ -108,12 +108,12 @@ def add_rrf_scores(
         results_by_id.setdefault(result.security_document_id, result)
         scores_by_id[result.security_document_id] = (
             scores_by_id.get(result.security_document_id, 0.0)
-            + calculate_rrf_score(rank, rrf_k)
+            + _calculate_rrf_score(rank, rrf_k)
         )
 
 
 # RRF 점수 계산
-def calculate_rrf_score(rank: int, rrf_k: int) -> float:
+def _calculate_rrf_score(rank: int, rrf_k: int) -> float:
     if rank <= 0:
         raise ValueError("rank must be positive")
 
@@ -121,7 +121,7 @@ def calculate_rrf_score(rank: int, rrf_k: int) -> float:
 
 
 # 내부 검색 결과를 LLM 입력용 evidence 문서로 변환
-def to_evidence_document(ranked_result: RankedSearchResult) -> EvidenceDocument:
+def _to_evidence_document(ranked_result: RankedSearchResult) -> EvidenceDocument:
     result = ranked_result.result
 
     return EvidenceDocument(
