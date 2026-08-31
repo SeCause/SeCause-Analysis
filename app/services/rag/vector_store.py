@@ -18,6 +18,17 @@ class SecurityDocumentRow:
     url: str | None = None
 
 
+@dataclass(frozen=True)
+class SecurityDocumentSearchResult:
+    security_document_id: int
+    source_type: RagSourceType
+    title: str
+    content: str
+    url: str | None = None
+    vector_distance: float | None = None
+    fts_rank: float | None = None
+
+
 class SecurityDocumentVectorStore:
     def __init__(self, session) -> None:
         self.session = session
@@ -108,6 +119,96 @@ class SecurityDocumentVectorStore:
 
         return deleted_count
 
+    # pgvector 코사인 유사도 기반 검색
+    async def search_by_vector(
+        self,
+        query_embedding: list[float],
+        limit: int,
+    ) -> list[SecurityDocumentSearchResult]:
+        
+        validate_search_limit(limit)
+        query = get_sql_text()(
+            """
+            SELECT
+                security_document_id,
+                source_type::text AS source_type,
+                title,
+                content,
+                url,
+                embedding <=> CAST(:query_embedding AS vector) AS vector_distance
+            FROM public.security_documents
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> CAST(:query_embedding AS vector)
+            LIMIT :limit
+            """
+        )
+
+        result = await self.session.execute(
+            query,
+            {
+                "query_embedding": to_vector_literal(query_embedding),
+                "limit": limit,
+            },
+        )
+
+        return [
+            build_search_result(row)
+            for row in result.mappings()
+        ]
+
+    # PostgreSQL FTS 기반 키워드 검색
+    async def search_by_fts(
+        self,
+        query_text: str,
+        limit: int,
+    ) -> list[SecurityDocumentSearchResult]:
+        validate_search_limit(limit)
+        query_text = query_text.strip()
+        if not query_text:
+            return []
+
+        query = get_sql_text()(
+            """
+            WITH search_query AS (
+                SELECT plainto_tsquery('english', :query_text) AS query
+            )
+            SELECT
+                document.security_document_id,
+                document.source_type::text AS source_type,
+                document.title,
+                document.content,
+                document.url,
+                ts_rank_cd(
+                    to_tsvector(
+                        'english',
+                        coalesce(document.title, '') || ' ' || coalesce(document.content, '')
+                    ),
+                    search_query.query
+                ) AS fts_rank
+            FROM public.security_documents AS document
+            CROSS JOIN search_query
+            WHERE to_tsvector(
+                    'english',
+                    coalesce(document.title, '') || ' ' || coalesce(document.content, '')
+                ) @@ search_query.query
+            ORDER BY fts_rank DESC
+            LIMIT :limit
+            """
+        )
+        
+        result = await self.session.execute(
+            query,
+            {
+                "query_text": query_text,
+                "limit": limit,
+            },
+        )
+
+        return [
+            build_search_result(row)
+            for row in result.mappings()
+        ]
+
 
 # chunk와 embedding 결과를 DB row로 매핑
 def build_security_document_rows(
@@ -134,6 +235,25 @@ def build_security_document_rows(
 # chunk 위치를 title에 보존
 def build_chunk_title(chunk: RagDocumentChunk) -> str:
     return f"{chunk.title} [{chunk.source_id}#{chunk.chunk_index}]"
+
+
+# DB 검색 row를 내부 결과 모델로 변환
+def build_search_result(row) -> SecurityDocumentSearchResult:
+    return SecurityDocumentSearchResult(
+        security_document_id=row["security_document_id"],
+        source_type=RagSourceType(row["source_type"]),
+        title=row["title"],
+        content=row["content"],
+        url=row["url"],
+        vector_distance=row.get("vector_distance"),
+        fts_rank=row.get("fts_rank"),
+    )
+
+
+# 검색 limit 검증
+def validate_search_limit(limit: int) -> None:
+    if limit <= 0:
+        raise VectorStoreError("Search limit must be positive")
 
 
 # pgvector CAST 입력용 문자열 생성
