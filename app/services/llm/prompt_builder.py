@@ -19,18 +19,21 @@ def build_explanation_prompt(
     return (
         "You are a security analysis assistant.\n"
         "Analyze the finding using the provided evidence documents.\n"
+        "Write all user-facing explanation values in Korean.\n"
+        "Keep JSON keys in English camelCase exactly as specified.\n"
+        "Keep code, file paths, identifiers, CWE IDs, and security terms unchanged when translation may reduce clarity.\n"
         "Return only valid JSON matching this schema:\n"
         "{\n"
-        '  "summary": "one sentence summary",\n'
-        '  "rootCause": "why this vulnerability occurs",\n'
-        '  "impact": "possible security impact",\n'
-        '  "recommendation": "practical remediation guidance",\n'
+        '  "summary": "취약점 요약 한 문장",\n'
+        '  "rootCause": "취약점이 발생한 원인",\n'
+        '  "impact": "가능한 보안 영향",\n'
+        '  "recommendation": "실무적인 수정 방향",\n'
         '  "fixExamples": [\n'
         "    {\n"
-        '      "language": "language name or null",\n'
-        '      "vulnerableCode": "optional vulnerable code snippet or null",\n'
-        '      "fixedCode": "secure code example",\n'
-        '      "explanation": "why the fix works"\n'
+        '      "language": "언어 이름 또는 null",\n'
+        '      "vulnerableCode": "취약한 코드 예시 또는 null",\n'
+        '      "fixedCode": "안전한 코드 예시",\n'
+        '      "explanation": "수정 코드가 안전한 이유"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"

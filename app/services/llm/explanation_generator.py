@@ -1,7 +1,7 @@
 from app.schemas.finding import Finding
+from app.schemas.explanation import ExplanationResult, ReferenceDocument
 from app.services.llm.claude_client import ClaudeExplanationClient
 from app.services.llm.prompt_builder import build_explanation_prompt
-from app.services.llm.schemas import ExplanationResult, ReferenceDocument
 from app.services.rag.hybrid_search import EvidenceDocument
 
 
@@ -47,10 +47,15 @@ def enrich_finding_with_explanation(
 
     return finding.model_copy(
         update={
+            "summary": explanation.summary,
+            "root_cause": explanation.root_cause,
+            "impact": explanation.impact,
             "recommendation": explanation.recommendation,
+            "fix_examples": explanation.fix_examples,
             "references": merge_references(
                 finding.references,
                 explanation.references,
             ),
+            "reference_documents": explanation.reference_documents,
         }
     )

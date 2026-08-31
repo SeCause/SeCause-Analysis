@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Any
 
-from app.services.llm.schemas import ExplanationResult
+from app.schemas.explanation import ExplanationResult
 
 logger = logging.getLogger(__name__)
 
