@@ -7,19 +7,102 @@ def build_explanation_prompt(
     finding: Finding,
     evidence_documents: list[EvidenceDocument],
 ) -> str:
-    evidence_summary = "\n".join(
-        f"- {document.title}: {document.content}" for document in evidence_documents
+    from app.core.config import settings
+
+    evidence_summary = build_evidence_context(
+        evidence_documents=evidence_documents,
+        max_documents=settings.LLM_EVIDENCE_TOP_K,
+        max_chars_per_document=settings.LLM_MAX_EVIDENCE_CHARS,
+        max_total_chars=settings.LLM_MAX_TOTAL_EVIDENCE_CHARS,
     )
-    if not evidence_summary:
-        evidence_summary = "- No external evidence documents were found."
 
     return (
-        "Explain the security finding and provide a concise remediation guide.\n"
+        "You are a security analysis assistant.\n"
+        "Analyze the finding using the provided evidence documents.\n"
+        "Return only valid JSON matching this schema:\n"
+        "{\n"
+        '  "summary": "one sentence summary",\n'
+        '  "rootCause": "why this vulnerability occurs",\n'
+        '  "impact": "possible security impact",\n'
+        '  "recommendation": "practical remediation guidance",\n'
+        '  "fixExamples": [\n'
+        "    {\n"
+        '      "language": "language name or null",\n'
+        '      "vulnerableCode": "optional vulnerable code snippet or null",\n'
+        '      "fixedCode": "secure code example",\n'
+        '      "explanation": "why the fix works"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "[Finding]\n"
         f"Finding type: {finding.type}\n"
         f"CWE: {finding.cwe_id or 'N/A'}\n"
         f"Severity: {finding.severity}\n"
-        f"Location: {finding.file_path}:{finding.line_start or 'N/A'}\n"
+        f"Tool: {finding.tool}\n"
+        f"Location: {format_finding_location(finding)}\n"
         f"Message: {finding.message}\n"
-        "Evidence:\n"
+        f"Code evidence: {finding.evidence or 'N/A'}\n\n"
+        "[Reference Evidence]\n"
         f"{evidence_summary}"
     )
+
+
+# evidence 문서 개수와 길이 제한
+def build_evidence_context(
+    evidence_documents: list[EvidenceDocument],
+    max_documents: int,
+    max_chars_per_document: int,
+    max_total_chars: int,
+) -> str:
+    if max_documents <= 0 or max_chars_per_document <= 0 or max_total_chars <= 0:
+        return "- No external evidence documents were included."
+
+    total_chars = 0
+    lines: list[str] = []
+
+    for index, document in enumerate(evidence_documents[:max_documents], start=1):
+        content = truncate_text(document.content, max_chars_per_document)
+        entry = (
+            f"{index}. Title: {document.title}\n"
+            f"   Source: {document.source}\n"
+            f"   URL: {document.url or 'N/A'}\n"
+            f"   Score: {document.score:.6f}\n"
+            f"   Content: {content}"
+        )
+
+        remaining_chars = max_total_chars - total_chars
+        if remaining_chars <= 0:
+            break
+
+        entry = truncate_text(entry, remaining_chars)
+        lines.append(entry)
+        total_chars += len(entry)
+
+    if not lines:
+        return "- No external evidence documents were found."
+
+    return "\n\n".join(lines)
+
+
+# 긴 텍스트를 지정 길이로 절단
+def truncate_text(value: str, max_chars: int) -> str:
+    normalized_value = " ".join(value.split())
+    if len(normalized_value) <= max_chars:
+        return normalized_value
+
+    if max_chars <= len(TRUNCATION_SUFFIX):
+        return normalized_value[:max_chars]
+
+    return normalized_value[: max_chars - len(TRUNCATION_SUFFIX)].rstrip() + TRUNCATION_SUFFIX
+
+
+# 파일 위치 문자열 생성
+def format_finding_location(finding: Finding) -> str:
+    line_start = finding.line_start or "N/A"
+    if finding.line_end is None or finding.line_end == finding.line_start:
+        return f"{finding.file_path}:{line_start}"
+
+    return f"{finding.file_path}:{line_start}-{finding.line_end}"
+
+
+TRUNCATION_SUFFIX = "... [truncated]"
