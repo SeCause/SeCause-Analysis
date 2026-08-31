@@ -9,6 +9,15 @@ class Settings(BaseSettings):
     
     # Claude API
     CLAUDE_API_KEY: str
+    CLAUDE_MODEL: str = "claude-sonnet-4-6"
+    CLAUDE_TIMEOUT_SECONDS: float = 30.0
+    CLAUDE_MAX_OUTPUT_TOKENS: int = 1200
+    CLAUDE_MAX_RETRIES: int = 2
+
+    # LLM Context Budget
+    LLM_EVIDENCE_TOP_K: int = 5
+    LLM_MAX_EVIDENCE_CHARS: int = 1200
+    LLM_MAX_TOTAL_EVIDENCE_CHARS: int = 6000
 
     # Embedding
     EMBEDDING_PROVIDER: str = "openai"
