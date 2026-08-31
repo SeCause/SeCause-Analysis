@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
+import re
 
 from app.services.rag.documents import RagDocumentChunk, RagSourceType
 from app.services.rag.embedder import EmbeddingResult
@@ -163,14 +164,14 @@ class SecurityDocumentVectorStore:
         limit: int,
     ) -> list[SecurityDocumentSearchResult]:
         _validate_search_limit(limit)
-        query_text = query_text.strip()
-        if not query_text:
+        fts_query_text = _build_fts_query_text(query_text)
+        if not fts_query_text:
             return []
 
         query = _get_sql_text()(
             """
             WITH search_query AS (
-                SELECT plainto_tsquery('english', :query_text) AS query
+                SELECT to_tsquery('english', :query_text) AS query
             )
             SELECT
                 document.security_document_id,
@@ -199,7 +200,7 @@ class SecurityDocumentVectorStore:
         result = await self.session.execute(
             query,
             {
-                "query_text": query_text,
+                "query_text": fts_query_text,
                 "limit": limit,
             },
         )
@@ -256,6 +257,36 @@ def _validate_search_limit(limit: int) -> None:
         raise VectorStoreError("Search limit must be positive")
 
 
+# Finding 문장을 FTS 후보 검색용 OR prefix query로 변환
+def _build_fts_query_text(query_text: str) -> str:
+    tokens = _extract_fts_tokens(query_text)
+    return " | ".join(f"{token}:*" for token in tokens)
+
+
+# FTS에 넣을 의미 있는 토큰 추출
+def _extract_fts_tokens(query_text: str) -> list[str]:
+    seen: set[str] = set()
+    tokens: list[str] = []
+
+    for token in re.findall(r"[A-Za-z0-9]+", query_text.lower()):
+        if token in FTS_STOP_WORDS:
+            continue
+
+        if len(token) < 2 and not token.isdigit():
+            continue
+
+        if token in seen:
+            continue
+
+        seen.add(token)
+        tokens.append(token)
+
+        if len(tokens) >= MAX_FTS_QUERY_TOKENS:
+            break
+
+    return tokens
+
+
 # pgvector CAST 입력용 문자열 생성
 def to_vector_literal(embedding: list[float]) -> str:
     if not embedding:
@@ -287,3 +318,30 @@ def _get_sqlalchemy_text_and_bindparam():
         raise VectorStoreError("sqlalchemy package is required for vector store") from exc
 
     return text, bindparam
+
+
+MAX_FTS_QUERY_TOKENS = 24
+FTS_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "used",
+    "user",
+    "with",
+}
