@@ -35,11 +35,11 @@ class ClaudeExplanationClient:
 
     # Claude API 호출 후 JSON 응답 반환
     def generate_explanation(self, prompt: str) -> ExplanationResult:
-        response_text = self._request_with_retry(prompt)
-        return parse_explanation_response(response_text)
+        payload = self._request_with_retry(prompt)
+        return _build_explanation_result(payload)
 
     # 외부 API 오류 발생 시 제한된 횟수만큼 재시도
-    def _request_with_retry(self, prompt: str) -> str:
+    def _request_with_retry(self, prompt: str) -> dict[str, Any]:
         last_error: Exception | None = None
 
         for attempt in range(self.max_retries + 1):
@@ -62,7 +62,7 @@ class ClaudeExplanationClient:
         raise ClaudeClientError("Claude explanation request failed") from last_error
 
     # Claude Messages API 단건 호출
-    def _request_once(self, prompt: str) -> str:
+    def _request_once(self, prompt: str) -> dict[str, Any]:
         try:
             from anthropic import Anthropic
         except ImportError as exc:
@@ -76,6 +76,11 @@ class ClaudeExplanationClient:
         response = client.messages.create(
             model=self.model,
             max_tokens=self.max_output_tokens,
+            tools=[EXPLANATION_TOOL_SCHEMA],
+            tool_choice={
+                "type": "tool",
+                "name": EXPLANATION_TOOL_NAME,
+            },
             messages=[
                 {
                     "role": "user",
@@ -84,15 +89,16 @@ class ClaudeExplanationClient:
             ],
         )
 
-        text_blocks = [
-            block.text
-            for block in response.content
-            if getattr(block, "type", None) == "text" and getattr(block, "text", None)
-        ]
-        if not text_blocks:
-            raise ClaudeResponseParseError("Claude response text is empty")
+        for block in response.content:
+            if (
+                getattr(block, "type", None) == "tool_use"
+                and getattr(block, "name", None) == EXPLANATION_TOOL_NAME
+            ):
+                tool_input = getattr(block, "input", None)
+                if isinstance(tool_input, dict):
+                    return tool_input
 
-        return "\n".join(text_blocks)
+        raise ClaudeResponseParseError("Claude response does not contain explanation tool output")
 
 
 # Claude 응답에서 JSON 객체를 추출해 DTO로 검증
@@ -121,6 +127,14 @@ def _extract_json_object(response_text: str) -> dict[str, Any]:
         raise ClaudeResponseParseError("Claude response JSON is invalid") from exc
 
 
+# Claude tool input을 DTO로 검증
+def _build_explanation_result(payload: dict[str, Any]) -> ExplanationResult:
+    try:
+        return ExplanationResult.model_validate(payload)
+    except Exception as exc:
+        raise ClaudeResponseParseError("Claude response does not match explanation schema") from exc
+
+
 # timeout, rate limit, 5xx 계열 오류만 재시도 대상으로 처리
 def _is_retryable_error(exc: Exception) -> bool:
     retryable_error_names = {
@@ -134,3 +148,71 @@ def _is_retryable_error(exc: Exception) -> bool:
 
     status_code = getattr(exc, "status_code", None)
     return status_code == 429 or (status_code is not None and status_code >= 500)
+
+
+EXPLANATION_TOOL_NAME = "generate_security_explanation"
+EXPLANATION_TOOL_SCHEMA = {
+    "name": EXPLANATION_TOOL_NAME,
+    "description": "Generate a Korean security finding explanation and remediation example.",
+    "input_schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "취약점 요약 한 문장",
+            },
+            "rootCause": {
+                "type": "string",
+                "description": "취약점이 발생한 원인",
+            },
+            "impact": {
+                "type": "string",
+                "description": "가능한 보안 영향",
+            },
+            "recommendation": {
+                "type": "string",
+                "description": "실무적인 수정 방향",
+            },
+            "fixExamples": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "language": {
+                            "type": ["string", "null"],
+                            "description": "언어 이름 또는 null",
+                        },
+                        "vulnerableCode": {
+                            "type": ["string", "null"],
+                            "description": "취약한 코드 예시 또는 null",
+                        },
+                        "fixedCode": {
+                            "type": "string",
+                            "description": "안전한 코드 예시",
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "수정 코드가 안전한 이유",
+                        },
+                    },
+                    "required": [
+                        "language",
+                        "vulnerableCode",
+                        "fixedCode",
+                        "explanation",
+                    ],
+                },
+            },
+        },
+        "required": [
+            "summary",
+            "rootCause",
+            "impact",
+            "recommendation",
+            "fixExamples",
+        ],
+    },
+}

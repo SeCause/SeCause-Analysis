@@ -22,6 +22,7 @@ def build_explanation_prompt(
         "Write all user-facing explanation values in Korean.\n"
         "Keep JSON keys in English camelCase exactly as specified.\n"
         "Keep code, file paths, identifiers, CWE IDs, and security terms unchanged when translation may reduce clarity.\n"
+        "Include at least one fixExamples item whenever the vulnerable pattern can be inferred.\n"
         "Return only valid JSON matching this schema:\n"
         "{\n"
         '  "summary": "취약점 요약 한 문장",\n'
