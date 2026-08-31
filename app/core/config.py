@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     ANALYSIS_QUEUE_NAME: str = "analysis"
     GITHUB_TOKEN_TTL_SECONDS: int = 3600
+
+    # Spring Callback
+    SPRING_CALLBACK_BASE_URL: str = "http://localhost:8080"
+    SPRING_SUCCESS_CALLBACK_PATH: str = "/internal/analysis/callback/success"
+    SPRING_FAILURE_CALLBACK_PATH: str = "/internal/analysis/callback/failure"
+    SPRING_CALLBACK_TIMEOUT_SECONDS: float = 10.0
+    SPRING_CALLBACK_MAX_RETRIES: int = 2
     
     # Server
     HOST: str = "0.0.0.0"
