@@ -55,9 +55,13 @@ async def search_evidence_async(query: RagQuery) -> list[EvidenceDocument]:
 
     async with AsyncSessionLocal() as session:
         store = SecurityDocumentVectorStore(session)
-        vector_results, fts_results = await asyncio.gather(
-            store.search_by_vector(query_embedding, settings.RAG_VECTOR_TOP_K),
-            store.search_by_fts(query.query_text, settings.RAG_FTS_TOP_K),
+        vector_results = await store.search_by_vector(
+            query_embedding,
+            settings.RAG_VECTOR_TOP_K,
+        )
+        fts_results = await store.search_by_fts(
+            query.query_text,
+            settings.RAG_FTS_TOP_K,
         )
 
     ranked_results = _merge_results_by_rrf(
