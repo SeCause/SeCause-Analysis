@@ -51,16 +51,16 @@ async def search_evidence_async(query: RagQuery) -> list[EvidenceDocument]:
     from app.core.config import settings
     from app.core.database import AsyncSessionLocal
 
-    query_embedding = OpenAIEmbedder().embed_query(query.query_text)
-
     async with AsyncSessionLocal() as session:
         store = SecurityDocumentVectorStore(session)
-        vector_results = await store.search_by_vector(
-            query_embedding,
+        vector_results = await _search_by_vector_safely(
+            store,
+            query,
             settings.RAG_VECTOR_TOP_K,
         )
-        fts_results = await store.search_by_fts(
-            query.query_text,
+        fts_results = await _search_by_fts_safely(
+            store,
+            query,
             settings.RAG_FTS_TOP_K,
         )
 
@@ -74,6 +74,41 @@ async def search_evidence_async(query: RagQuery) -> list[EvidenceDocument]:
         _to_evidence_document(ranked_result)
         for ranked_result in ranked_results[: settings.RAG_RESULT_TOP_K]
     ]
+
+
+# vector 검색 실패 시 FTS fallback을 막지 않도록 빈 결과 반환
+async def _search_by_vector_safely(
+    store: SecurityDocumentVectorStore,
+    query: RagQuery,
+    limit: int,
+) -> list[SecurityDocumentSearchResult]:
+    try:
+        query_embedding = OpenAIEmbedder().embed_query(query.query_text)
+        return await store.search_by_vector(query_embedding, limit)
+    except Exception:
+        logger.exception(
+            "RAG vector search failed. cwe_id=%s type=%s",
+            query.cwe_id,
+            query.vulnerability_type,
+        )
+        return []
+
+
+# FTS 검색 실패 시 vector 결과를 유지하도록 빈 결과 반환
+async def _search_by_fts_safely(
+    store: SecurityDocumentVectorStore,
+    query: RagQuery,
+    limit: int,
+) -> list[SecurityDocumentSearchResult]:
+    try:
+        return await store.search_by_fts(query.query_text, limit)
+    except Exception:
+        logger.exception(
+            "RAG FTS search failed. cwe_id=%s type=%s",
+            query.cwe_id,
+            query.vulnerability_type,
+        )
+        return []
 
 
 # RRF 방식으로 vector/FTS 결과 병합
