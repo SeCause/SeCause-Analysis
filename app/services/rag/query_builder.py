@@ -3,6 +3,7 @@ import re
 
 from app.schemas.base import CamelModel
 from app.schemas.finding import Finding
+from app.services.rag.documents import RagSourceType
 
 
 class RagQuery(CamelModel):
@@ -12,6 +13,7 @@ class RagQuery(CamelModel):
     language: str | None
     keywords: list[str]
     query_text: str
+    source_types: list[RagSourceType]
 
 
 # Finding의 핵심 속성을 RAG 검색에 사용할 query 객체로 변환
@@ -28,6 +30,7 @@ def build_rag_query(finding: Finding) -> RagQuery:
         if keyword
     ]
     query_text = build_rag_query_text(finding, keywords, language)
+    source_types = infer_source_types(finding.cwe_id)
 
     return RagQuery(
         cwe_id=finding.cwe_id,
@@ -36,6 +39,7 @@ def build_rag_query(finding: Finding) -> RagQuery:
         language=language,
         keywords=keywords,
         query_text=query_text,
+        source_types=source_types,
     )
 
 
@@ -89,6 +93,14 @@ def infer_language(file_path: str) -> str | None:
         else file_name.lower()
     )
     return LANGUAGE_BY_EXTENSION.get(extension)
+
+
+# CWE가 있으면 보안 기준 문서 중심으로 검색 범위 제한
+def infer_source_types(cwe_id: str | None) -> list[RagSourceType]:
+    if cwe_id:
+        return [RagSourceType.CWE, RagSourceType.OWASP]
+
+    return []
 
 
 LANGUAGE_BY_EXTENSION = {

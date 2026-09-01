@@ -13,7 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from app.schemas.finding import Finding, FindingSeverity, FindingTool
 from app.services.rag.embedder import OpenAIEmbedder
 from app.services.rag.hybrid_search import EvidenceDocument
-from app.services.rag.query_builder import build_rag_query
+from app.services.rag.query_builder import RagQuery, build_rag_query
 from app.services.rag.vector_store import (
     SecurityDocumentSearchResult,
     SecurityDocumentVectorStore,
@@ -117,7 +117,6 @@ async def evaluate_cases(
     from app.core.config import settings
     from app.core.database import AsyncSessionLocal
 
-    embedder = OpenAIEmbedder()
     async with AsyncSessionLocal() as session:
         store = SecurityDocumentVectorStore(session)
         results: list[CaseResult] = []
@@ -125,11 +124,9 @@ async def evaluate_cases(
         for case in cases:
             started_at = time.perf_counter()
             query = build_rag_query(case.finding)
-            query_embedding = embedder.embed_query(query.query_text)
             search_results = await search_by_mode(
                 store=store,
-                query_text=query.query_text,
-                query_embedding=query_embedding,
+                query=query,
                 mode=mode,
                 top_k=top_k,
                 vector_top_k=settings.RAG_VECTOR_TOP_K,
@@ -145,8 +142,7 @@ async def evaluate_cases(
 # mode별 검색 실행
 async def search_by_mode(
     store: SecurityDocumentVectorStore,
-    query_text: str,
-    query_embedding: list[float],
+    query: RagQuery,
     mode: str,
     top_k: int,
     vector_top_k: int,
@@ -154,15 +150,17 @@ async def search_by_mode(
     rrf_k: int,
 ) -> list[EvidenceDocument]:
     if mode == "vector":
-        results = await store.search_by_vector(query_embedding, top_k)
+        query_embedding = OpenAIEmbedder().embed_query(query.query_text)
+        results = await store.search_by_vector(query_embedding, top_k, query.source_types)
         return [_to_evidence_document(result, 1 / (rank + 1)) for rank, result in enumerate(results)]
 
     if mode == "fts":
-        results = await store.search_by_fts(query_text, top_k)
+        results = await store.search_by_fts(query.query_text, top_k, query.source_types)
         return [_to_evidence_document(result, result.fts_rank or 0.0) for result in results]
 
-    vector_results = await store.search_by_vector(query_embedding, vector_top_k)
-    fts_results = await store.search_by_fts(query_text, fts_top_k)
+    query_embedding = OpenAIEmbedder().embed_query(query.query_text)
+    vector_results = await store.search_by_vector(query_embedding, vector_top_k, query.source_types)
+    fts_results = await store.search_by_fts(query.query_text, fts_top_k, query.source_types)
     return merge_hybrid_results(vector_results, fts_results, rrf_k)[:top_k]
 
 
