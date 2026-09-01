@@ -125,10 +125,11 @@ class SecurityDocumentVectorStore:
         self,
         query_embedding: list[float],
         limit: int,
+        source_types: list[RagSourceType] | None = None,
     ) -> list[SecurityDocumentSearchResult]:
         
         _validate_search_limit(limit)
-        query = _get_sql_text()(
+        query = _build_source_type_query(
             """
             SELECT
                 security_document_id,
@@ -139,16 +140,20 @@ class SecurityDocumentVectorStore:
                 embedding <=> CAST(:query_embedding AS vector) AS vector_distance
             FROM public.security_documents
             WHERE embedding IS NOT NULL
+              AND (:source_type_count = 0 OR source_type::text IN :source_types)
             ORDER BY embedding <=> CAST(:query_embedding AS vector)
             LIMIT :limit
             """
         )
+        source_type_values = _to_source_type_values(source_types)
 
         result = await self.session.execute(
             query,
             {
                 "query_embedding": to_vector_literal(query_embedding),
                 "limit": limit,
+                "source_type_count": len(source_type_values),
+                "source_types": source_type_values,
             },
         )
 
@@ -162,13 +167,14 @@ class SecurityDocumentVectorStore:
         self,
         query_text: str,
         limit: int,
+        source_types: list[RagSourceType] | None = None,
     ) -> list[SecurityDocumentSearchResult]:
         _validate_search_limit(limit)
         fts_query_text = _build_fts_query_text(query_text)
         if not fts_query_text:
             return []
 
-        query = _get_sql_text()(
+        query = _build_source_type_query(
             """
             WITH search_query AS (
                 SELECT to_tsquery('english', :query_text) AS query
@@ -192,16 +198,71 @@ class SecurityDocumentVectorStore:
                     'english',
                     coalesce(document.title, '') || ' ' || coalesce(document.content, '')
                 ) @@ search_query.query
+              AND (:source_type_count = 0 OR document.source_type::text IN :source_types)
             ORDER BY fts_rank DESC
             LIMIT :limit
             """
         )
+        source_type_values = _to_source_type_values(source_types)
         
         result = await self.session.execute(
             query,
             {
                 "query_text": fts_query_text,
                 "limit": limit,
+                "source_type_count": len(source_type_values),
+                "source_types": source_type_values,
+            },
+        )
+
+        return [
+            _build_search_result(row)
+            for row in result.mappings()
+        ]
+
+    # CWE ID 정확 매칭 문서 검색
+    async def search_by_cwe_id(
+        self,
+        cwe_id: str,
+        limit: int,
+        source_types: list[RagSourceType] | None = None,
+    ) -> list[SecurityDocumentSearchResult]:
+        _validate_search_limit(limit)
+        cwe_id = cwe_id.strip()
+        if not cwe_id:
+            return []
+
+        query = _build_source_type_query(
+            """
+            SELECT
+                security_document_id,
+                source_type::text AS source_type,
+                title,
+                content,
+                url
+            FROM public.security_documents
+            WHERE (
+                    title ILIKE :cwe_pattern
+                    OR content ILIKE :cwe_pattern
+                    OR url ILIKE :cwe_pattern
+                )
+              AND (:source_type_count = 0 OR source_type::text IN :source_types)
+            ORDER BY
+                CASE WHEN title ILIKE :title_prefix_pattern THEN 0 ELSE 1 END,
+                security_document_id
+            LIMIT :limit
+            """
+        )
+        source_type_values = _to_source_type_values(source_types)
+
+        result = await self.session.execute(
+            query,
+            {
+                "cwe_pattern": f"%{cwe_id}%",
+                "title_prefix_pattern": f"{cwe_id}:%",
+                "limit": limit,
+                "source_type_count": len(source_type_values),
+                "source_types": source_type_values,
             },
         )
 
@@ -255,6 +316,20 @@ def _build_search_result(row) -> SecurityDocumentSearchResult:
 def _validate_search_limit(limit: int) -> None:
     if limit <= 0:
         raise VectorStoreError("Search limit must be positive")
+
+
+# source_type IN 절을 포함한 SQLAlchemy text 생성
+def _build_source_type_query(query: str):
+    text, bindparam = _get_sqlalchemy_text_and_bindparam()
+    return text(query).bindparams(bindparam("source_types", expanding=True))
+
+
+# source_type enum을 DB 비교용 문자열 tuple로 변환
+def _to_source_type_values(source_types: list[RagSourceType] | None) -> tuple[str, ...]:
+    if not source_types:
+        return ()
+
+    return tuple(source_type.value for source_type in source_types)
 
 
 # Finding 문장을 FTS 후보 검색용 OR prefix query로 변환
