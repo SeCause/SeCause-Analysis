@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import ConfigDict, Field
 
 from app.schemas.base import CamelModel, to_camel
+from app.schemas.explanation import FixExample, ReferenceDocument
 
 
 class FindingSeverity(str, Enum):
@@ -36,5 +37,10 @@ class Finding(CamelModel):
     line_end: Optional[int] = None
     message: str
     evidence: Optional[str] = None
+    summary: Optional[str] = None
+    root_cause: Optional[str] = None
+    impact: Optional[str] = None
     recommendation: Optional[str] = None
+    fix_examples: list[FixExample] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
+    reference_documents: list[ReferenceDocument] = Field(default_factory=list)

@@ -10,6 +10,7 @@ from app.services.callback.spring_client import (
     AnalysisFailureCallbackPayload,
     AnalysisSuccessCallbackPayload,
     AnalysisSummary,
+    SpringCallbackError,
     SpringCallbackClient,
 )
 from app.services.llm.explanation_generator import enrich_finding_with_explanation
@@ -73,7 +74,13 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         }
     except Exception as exc:
         failure_payload = build_failure_callback_payload(context, payload, exc)
-        callback_client.send_failure(failure_payload)
+        try:
+            callback_client.send_failure(failure_payload)
+        except SpringCallbackError:
+            logger.exception(
+                "Failed to send Spring failure callback. analysis_id=%s",
+                failure_payload.analysis_id,
+            )
         raise
     finally:
         cleanup_github_token_reference(context, payload)
@@ -161,5 +168,5 @@ def build_failure_callback_payload(
         repository_id=context.repository_id if context else payload.get("repository_id"),
         error_code=exc.__class__.__name__,
         error_message=str(exc),
-        failed_stage="PIPELINE",
+        failed_stage="CALLBACK" if isinstance(exc, SpringCallbackError) else "PIPELINE",
     )
