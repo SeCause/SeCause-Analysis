@@ -60,6 +60,7 @@ class SpringCallbackClient:
         self.failure_path = settings.SPRING_FAILURE_CALLBACK_PATH.lstrip("/")
         self.timeout_seconds = settings.SPRING_CALLBACK_TIMEOUT_SECONDS
         self.max_retries = settings.SPRING_CALLBACK_MAX_RETRIES
+        self.internal_token = settings.ANALYSIS_CALLBACK_INTERNAL_TOKEN
 
     # 분석 성공 payload를 Spring callback API로 전송
     def send_success(self, payload: AnalysisSuccessCallbackPayload) -> None:
@@ -86,12 +87,13 @@ class SpringCallbackClient:
     def _post_callback(self, path: str, payload: CallbackPayload) -> None:
         url = urljoin(self.base_url, path)
         body = payload.model_dump(by_alias=True, mode="json")
+        headers = _build_internal_token_headers(self.internal_token)
         last_error: Exception | None = None
 
         for attempt in range(self.max_retries + 1):
             try:
                 with httpx.Client(timeout=self.timeout_seconds) as client:
-                    response = client.post(url, json=body)
+                    response = client.post(url, json=body, headers=headers)
                     response.raise_for_status()
 
                 logger.info(
@@ -128,3 +130,11 @@ def _is_retryable_callback_error(exc: Exception) -> bool:
         return status_code == 429 or status_code >= 500
 
     return False
+
+
+# 내부 callback token이 설정된 경우에만 인증 헤더 생성
+def _build_internal_token_headers(internal_token: str | None) -> dict[str, str] | None:
+    if internal_token is None or not internal_token.strip():
+        return None
+
+    return {"X-Internal-Token": internal_token}

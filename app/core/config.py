@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     SPRING_FAILURE_CALLBACK_PATH: str = "/internal/analysis/callback/failure"
     SPRING_CALLBACK_TIMEOUT_SECONDS: float = 10.0
     SPRING_CALLBACK_MAX_RETRIES: int = 2
+    ANALYSIS_CALLBACK_INTERNAL_TOKEN: str | None = None
     
     # Server
     HOST: str = "0.0.0.0"
