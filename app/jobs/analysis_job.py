@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 
+from app.collector.git_collector import build_authenticated_clone_url
 from app.jobs.secret_store import (
     delete_github_token_reference,
     resolve_github_token_reference,
@@ -32,7 +33,8 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         context = create_pipeline_context(payload)
         #토큰이 유효한지 검사
-        resolve_github_token_reference(context.github_token_reference)
+        github_token = resolve_github_token_reference(context.github_token_reference)
+        build_authenticated_clone_url(context.repository_url, github_token)
 
         logger.info(
             "Analysis pipeline started. analysis_id=%s repository_id=%s repository_url=%s branch=%s",
