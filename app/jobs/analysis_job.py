@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from app.collector.git_collector import build_authenticated_clone_url
+from app.collector.git_collector import cleanup_repository, shallow_clone_repository
 from app.jobs.secret_store import (
     delete_github_token_reference,
     resolve_github_token_reference,
@@ -34,7 +34,6 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         context = create_pipeline_context(payload)
         #토큰이 유효한지 검사
         github_token = resolve_github_token_reference(context.github_token_reference)
-        build_authenticated_clone_url(context.repository_url, github_token)
 
         logger.info(
             "Analysis pipeline started. analysis_id=%s repository_id=%s repository_url=%s branch=%s",
@@ -42,6 +41,16 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
             context.repository_id,
             context.repository_url,
             context.branch,
+        )
+
+        # 분석기가 실제로 검사할 repository 경로 생성
+        context.repo_path = str(
+            shallow_clone_repository(
+                context.repository_url,
+                context.branch,
+                github_token,
+                context.analysis_id,
+            )
         )
 
         #추후 runner 내부 조정 필요
@@ -85,6 +94,7 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
             )
         raise
     finally:
+        cleanup_repository(context.repo_path if context is not None else None)
         cleanup_github_token_reference(context, payload)
 
 
