@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
+import re
 
 from app.services.rag.documents import RagDocumentChunk, RagSourceType
 from app.services.rag.embedder import EmbeddingResult
@@ -18,13 +19,24 @@ class SecurityDocumentRow:
     url: str | None = None
 
 
+@dataclass(frozen=True)
+class SecurityDocumentSearchResult:
+    security_document_id: int
+    source_type: RagSourceType
+    title: str
+    content: str
+    url: str | None = None
+    vector_distance: float | None = None
+    fts_rank: float | None = None
+
+
 class SecurityDocumentVectorStore:
     def __init__(self, session) -> None:
         self.session = session
 
     # source_type 단위 기존 색인 삭제
     async def delete_by_source_type(self, source_type: RagSourceType) -> int:
-        query = get_sql_text()(
+        query = _get_sql_text()(
             """
             DELETE FROM public.security_documents
             WHERE source_type = CAST(:source_type AS reference_type_enum)
@@ -43,7 +55,7 @@ class SecurityDocumentVectorStore:
 
         await self.delete_existing_rows(rows)
 
-        query = get_sql_text()(
+        query = _get_sql_text()(
             """
             INSERT INTO public.security_documents (
                 title,
@@ -87,7 +99,7 @@ class SecurityDocumentVectorStore:
             rows_by_source_type[row.source_type].add(row.title)
 
         deleted_count = 0
-        text, bindparam = get_sqlalchemy_text_and_bindparam()
+        text, bindparam = _get_sqlalchemy_text_and_bindparam()
         query = text(
             """
             DELETE FROM public.security_documents
@@ -108,6 +120,157 @@ class SecurityDocumentVectorStore:
 
         return deleted_count
 
+    # pgvector 코사인 유사도 기반 검색
+    async def search_by_vector(
+        self,
+        query_embedding: list[float],
+        limit: int,
+        source_types: list[RagSourceType] | None = None,
+    ) -> list[SecurityDocumentSearchResult]:
+        
+        _validate_search_limit(limit)
+        query = _build_source_type_query(
+            """
+            SELECT
+                security_document_id,
+                source_type::text AS source_type,
+                title,
+                content,
+                url,
+                embedding <=> CAST(:query_embedding AS vector) AS vector_distance
+            FROM public.security_documents
+            WHERE embedding IS NOT NULL
+              AND (:source_type_count = 0 OR source_type::text IN :source_types)
+            ORDER BY embedding <=> CAST(:query_embedding AS vector)
+            LIMIT :limit
+            """
+        )
+        source_type_values = _to_source_type_values(source_types)
+
+        result = await self.session.execute(
+            query,
+            {
+                "query_embedding": to_vector_literal(query_embedding),
+                "limit": limit,
+                "source_type_count": len(source_type_values),
+                "source_types": source_type_values,
+            },
+        )
+
+        return [
+            _build_search_result(row)
+            for row in result.mappings()
+        ]
+
+    # PostgreSQL FTS 기반 키워드 검색
+    async def search_by_fts(
+        self,
+        query_text: str,
+        limit: int,
+        source_types: list[RagSourceType] | None = None,
+    ) -> list[SecurityDocumentSearchResult]:
+        _validate_search_limit(limit)
+        fts_query_text = _build_fts_query_text(query_text)
+        if not fts_query_text:
+            return []
+
+        query = _build_source_type_query(
+            """
+            WITH search_query AS (
+                SELECT to_tsquery('english', :query_text) AS query
+            )
+            SELECT
+                document.security_document_id,
+                document.source_type::text AS source_type,
+                document.title,
+                document.content,
+                document.url,
+                ts_rank_cd(
+                    to_tsvector(
+                        'english',
+                        coalesce(document.title, '') || ' ' || coalesce(document.content, '')
+                    ),
+                    search_query.query
+                ) AS fts_rank
+            FROM public.security_documents AS document
+            CROSS JOIN search_query
+            WHERE to_tsvector(
+                    'english',
+                    coalesce(document.title, '') || ' ' || coalesce(document.content, '')
+                ) @@ search_query.query
+              AND (:source_type_count = 0 OR document.source_type::text IN :source_types)
+            ORDER BY fts_rank DESC
+            LIMIT :limit
+            """
+        )
+        source_type_values = _to_source_type_values(source_types)
+        
+        result = await self.session.execute(
+            query,
+            {
+                "query_text": fts_query_text,
+                "limit": limit,
+                "source_type_count": len(source_type_values),
+                "source_types": source_type_values,
+            },
+        )
+
+        return [
+            _build_search_result(row)
+            for row in result.mappings()
+        ]
+
+    # CWE ID 정확 매칭 문서 검색
+    async def search_by_cwe_id(
+        self,
+        cwe_id: str,
+        limit: int,
+        source_types: list[RagSourceType] | None = None,
+    ) -> list[SecurityDocumentSearchResult]:
+        _validate_search_limit(limit)
+        cwe_id = cwe_id.strip()
+        if not cwe_id:
+            return []
+
+        query = _build_source_type_query(
+            """
+            SELECT
+                security_document_id,
+                source_type::text AS source_type,
+                title,
+                content,
+                url
+            FROM public.security_documents
+            WHERE (
+                    title ILIKE :cwe_pattern
+                    OR content ILIKE :cwe_pattern
+                    OR url ILIKE :cwe_pattern
+                )
+              AND (:source_type_count = 0 OR source_type::text IN :source_types)
+            ORDER BY
+                CASE WHEN title ILIKE :title_prefix_pattern THEN 0 ELSE 1 END,
+                security_document_id
+            LIMIT :limit
+            """
+        )
+        source_type_values = _to_source_type_values(source_types)
+
+        result = await self.session.execute(
+            query,
+            {
+                "cwe_pattern": f"%{cwe_id}%",
+                "title_prefix_pattern": f"{cwe_id}:%",
+                "limit": limit,
+                "source_type_count": len(source_type_values),
+                "source_types": source_type_values,
+            },
+        )
+
+        return [
+            _build_search_result(row)
+            for row in result.mappings()
+        ]
+
 
 # chunk와 embedding 결과를 DB row로 매핑
 def build_security_document_rows(
@@ -122,7 +285,7 @@ def build_security_document_rows(
     return [
         SecurityDocumentRow(
             source_type=chunk.source_type,
-            title=build_chunk_title(chunk),
+            title=_build_chunk_title(chunk),
             content=chunk.content,
             embedding=embedding_result.embedding,
             url=chunk.url,
@@ -132,8 +295,71 @@ def build_security_document_rows(
 
 
 # chunk 위치를 title에 보존
-def build_chunk_title(chunk: RagDocumentChunk) -> str:
+def _build_chunk_title(chunk: RagDocumentChunk) -> str:
     return f"{chunk.title} [{chunk.source_id}#{chunk.chunk_index}]"
+
+
+# DB 검색 row를 내부 결과 모델로 변환
+def _build_search_result(row) -> SecurityDocumentSearchResult:
+    return SecurityDocumentSearchResult(
+        security_document_id=row["security_document_id"],
+        source_type=RagSourceType(row["source_type"]),
+        title=row["title"],
+        content=row["content"],
+        url=row["url"],
+        vector_distance=row.get("vector_distance"),
+        fts_rank=row.get("fts_rank"),
+    )
+
+
+# 검색 limit 검증
+def _validate_search_limit(limit: int) -> None:
+    if limit <= 0:
+        raise VectorStoreError("Search limit must be positive")
+
+
+# source_type IN 절을 포함한 SQLAlchemy text 생성
+def _build_source_type_query(query: str):
+    text, bindparam = _get_sqlalchemy_text_and_bindparam()
+    return text(query).bindparams(bindparam("source_types", expanding=True))
+
+
+# source_type enum을 DB 비교용 문자열 tuple로 변환
+def _to_source_type_values(source_types: list[RagSourceType] | None) -> tuple[str, ...]:
+    if not source_types:
+        return ()
+
+    return tuple(source_type.value for source_type in source_types)
+
+
+# Finding 문장을 FTS 후보 검색용 OR prefix query로 변환
+def _build_fts_query_text(query_text: str) -> str:
+    tokens = _extract_fts_tokens(query_text)
+    return " | ".join(f"{token}:*" for token in tokens)
+
+
+# FTS에 넣을 의미 있는 토큰 추출
+def _extract_fts_tokens(query_text: str) -> list[str]:
+    seen: set[str] = set()
+    tokens: list[str] = []
+
+    for token in re.findall(r"[A-Za-z0-9]+", query_text.lower()):
+        if token in FTS_STOP_WORDS:
+            continue
+
+        if len(token) < 2 and not token.isdigit():
+            continue
+
+        if token in seen:
+            continue
+
+        seen.add(token)
+        tokens.append(token)
+
+        if len(tokens) >= MAX_FTS_QUERY_TOKENS:
+            break
+
+    return tokens
 
 
 # pgvector CAST 입력용 문자열 생성
@@ -141,16 +367,16 @@ def to_vector_literal(embedding: list[float]) -> str:
     if not embedding:
         raise VectorStoreError("Embedding vector must not be empty")
 
-    return "[" + ",".join(format_vector_number(value) for value in embedding) + "]"
+    return "[" + ",".join(_format_vector_number(value) for value in embedding) + "]"
 
 
 # vector literal 숫자 포맷 정규화
-def format_vector_number(value: float) -> str:
+def _format_vector_number(value: float) -> str:
     return format(float(value), ".10g")
 
 
 # SQLAlchemy text 지연 로딩
-def get_sql_text():
+def _get_sql_text():
     try:
         from sqlalchemy import text
     except ImportError as exc:
@@ -160,10 +386,37 @@ def get_sql_text():
 
 
 # SQLAlchemy text/bindparam 지연 로딩
-def get_sqlalchemy_text_and_bindparam():
+def _get_sqlalchemy_text_and_bindparam():
     try:
         from sqlalchemy import bindparam, text
     except ImportError as exc:
         raise VectorStoreError("sqlalchemy package is required for vector store") from exc
 
     return text, bindparam
+
+
+MAX_FTS_QUERY_TOKENS = 24
+FTS_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "used",
+    "user",
+    "with",
+}

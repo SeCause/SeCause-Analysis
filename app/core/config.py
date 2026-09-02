@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     EMBEDDING_BATCH_SIZE: int = 64
     OPENAI_API_KEY: str | None = None
 
+    # RAG Search
+    RAG_VECTOR_TOP_K: int = 10
+    RAG_FTS_TOP_K: int = 10
+    RAG_RESULT_TOP_K: int = 5
+    RAG_RRF_K: int = 60
+
     # Queue
     REDIS_URL: str = "redis://localhost:6379/0"
     ANALYSIS_QUEUE_NAME: str = "analysis"
