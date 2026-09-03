@@ -4,7 +4,8 @@ from pathlib import Path
 from pydantic import SecretStr
 import shutil
 import subprocess
-from urllib.parse import quote, urlsplit, urlunsplit
+import tempfile
+from urllib.parse import urlsplit, urlunsplit
 
 from app.core.config import settings
 
@@ -20,36 +21,62 @@ class GitCloneError(RuntimeError):
     pass
 
 
-# GitHub token을 포함한 HTTPS clone URL을 생성
-def build_authenticated_clone_url(
-    repository_url: str,
-    github_token: SecretStr,
-) -> str:
+# Git clone에 사용할 HTTPS repository URL을 검증
+def validate_clone_url(repository_url: str) -> str:
     parsed_url = urlsplit(repository_url)
-    token = github_token.get_secret_value()
 
     if parsed_url.scheme != "https" or parsed_url.hostname is None:
         raise GitCloneUrlError("Repository URL must be a valid HTTPS URL")
 
-    if not token:
-        raise GitCloneUrlError("GitHub token must not be empty")
+    if parsed_url.username is not None or parsed_url.password is not None:
+        raise GitCloneUrlError("Repository URL must not include credentials")
 
-    host = parsed_url.hostname
-    if parsed_url.port is not None:
-        host = f"{host}:{parsed_url.port}"
-
-    encoded_token = quote(token, safe="")
-    authenticated_host = f"x-access-token:{encoded_token}@{host}"
+    if parsed_url.hostname.lower() not in get_allowed_git_hosts():
+        raise GitCloneUrlError("Repository URL host is not allowed")
 
     return urlunsplit(
         (
             parsed_url.scheme,
-            authenticated_host,
+            parsed_url.netloc,
             parsed_url.path,
             parsed_url.query,
             parsed_url.fragment,
         )
     )
+
+
+# 허용된 Git repository host 목록을 설정에서 로딩
+def get_allowed_git_hosts() -> set[str]:
+    return {
+        host.strip().lower()
+        for host in settings.GIT_ALLOWED_HOSTS.split(",")
+        if host.strip()
+    }
+
+
+# GitHub token을 command line 인자에 넣지 않기 위한 askpass script 생성
+def create_git_askpass_script() -> Path:
+    script = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="secause-git-askpass-",
+        suffix=".sh",
+        delete=False,
+    )
+    try:
+        script.write(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "*Username*) printf '%s\\n' 'x-access-token' ;;\n"
+            "*Password*) printf '%s\\n' \"$GIT_ASKPASS_TOKEN\" ;;\n"
+            "*) printf '\\n' ;;\n"
+            "esac\n"
+        )
+    finally:
+        script.close()
+
+    os.chmod(script.name, 0o700)
+    return Path(script.name)
 
 
 # Git shallow clone을 수행하고 clone된 repository path를 반환
@@ -64,7 +91,11 @@ def shallow_clone_repository(
     if not branch.strip():
         raise GitCloneError("Repository branch must not be empty")
 
-    clone_url = build_authenticated_clone_url(repository_url, github_token)
+    token = github_token.get_secret_value()
+    if not token:
+        raise GitCloneError("GitHub token must not be empty")
+
+    clone_url = validate_clone_url(repository_url)
     destination = build_repository_path(analysis_id, clone_root_dir)
     timeout = timeout_seconds or settings.GIT_CLONE_TIMEOUT_SECONDS
 
@@ -73,7 +104,7 @@ def shallow_clone_repository(
     logger.info(
         "Git shallow clone started. analysis_id=%s repository_url=%s branch=%s destination=%s",
         analysis_id,
-        mask_clone_url(clone_url),
+        clone_url,
         branch,
         destination,
     )
@@ -90,36 +121,44 @@ def shallow_clone_repository(
         str(destination),
     ]
 
+    askpass_script = create_git_askpass_script()
     try:
         result = subprocess.run(
             command,
             capture_output=True,
             check=False,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env={
+                **os.environ,
+                "GIT_ASKPASS": str(askpass_script),
+                "GIT_ASKPASS_TOKEN": token,
+                "GIT_TERMINAL_PROMPT": "0",
+            },
             text=True,
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         cleanup_repository(destination)
         raise GitCloneError(
-            f"Git shallow clone timed out. repository_url={mask_clone_url(clone_url)} branch={branch}"
+            f"Git shallow clone timed out. repository_url={clone_url} branch={branch}"
         ) from exc
     except OSError as exc:
         cleanup_repository(destination)
         raise GitCloneError("Git executable is unavailable") from exc
+    finally:
+        cleanup_askpass_script(askpass_script)
 
     if result.returncode != 0:
         cleanup_repository(destination)
-        stderr = truncate_output(sanitize_git_output(result.stderr, clone_url, github_token))
+        stderr = truncate_output(sanitize_git_output(result.stderr, github_token))
         raise GitCloneError(
             "Git shallow clone failed. "
-            f"repository_url={mask_clone_url(clone_url)} branch={branch} stderr={stderr}"
+            f"repository_url={clone_url} branch={branch} stderr={stderr}"
         )
 
     logger.info(
         "Git shallow clone completed. analysis_id=%s repository_url=%s branch=%s destination=%s",
         analysis_id,
-        mask_clone_url(clone_url),
+        clone_url,
         branch,
         destination,
     )
@@ -162,38 +201,27 @@ def cleanup_empty_parent(path: Path) -> None:
         return
 
 
-# 로그 출력용으로 credential 정보를 제거한 clone URL을 생성
-def mask_clone_url(clone_url: str) -> str:
-    parsed_url = urlsplit(clone_url)
-    if parsed_url.hostname is None:
-        return clone_url
+# 임시 askpass script를 삭제
+def cleanup_askpass_script(script_path: Path | None) -> None:
+    if script_path is None:
+        return
 
-    host = parsed_url.hostname
-    if parsed_url.port is not None:
-        host = f"{host}:{parsed_url.port}"
-
-    return urlunsplit(
-        (
-            parsed_url.scheme,
-            host,
-            parsed_url.path,
-            parsed_url.query,
-            parsed_url.fragment,
-        )
-    )
+    try:
+        script_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Failed to delete Git askpass script. path=%s", script_path)
 
 
 # git stderr/stdout에서 credential 값을 제거
 def sanitize_git_output(
     output: str | None,
-    clone_url: str,
     github_token: SecretStr,
 ) -> str:
     if not output:
         return ""
 
     token = github_token.get_secret_value()
-    sanitized = output.replace(clone_url, mask_clone_url(clone_url))
+    sanitized = output
     if token:
         sanitized = sanitized.replace(token, "***")
 

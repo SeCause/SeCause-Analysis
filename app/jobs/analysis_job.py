@@ -94,8 +94,15 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
             )
         raise
     finally:
-        cleanup_repository(context.repo_path if context is not None else None)
-        cleanup_github_token_reference(context, payload)
+        try:
+            cleanup_repository(context.repo_path if context is not None else None)
+        except Exception:
+            logger.warning(
+                "Failed to cleanup repository. analysis_id=%s",
+                context.analysis_id if context is not None else payload.get("analysis_id"),
+            )
+        finally:
+            cleanup_github_token_reference(context, payload)
 
 
 # RQ payload를 worker 내부 pipeline context로 변환

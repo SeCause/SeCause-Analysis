@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # Git clone
     GIT_CLONE_ROOT_DIR: str = "/tmp/secause-analysis"
     GIT_CLONE_TIMEOUT_SECONDS: int = 120
+    GIT_ALLOWED_HOSTS: str = "github.com"
     
     # Server
     HOST: str = "0.0.0.0"
