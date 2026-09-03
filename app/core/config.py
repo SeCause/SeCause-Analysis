@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     GIT_CLONE_ROOT_DIR: str | None = None
     GIT_CLONE_TIMEOUT_SECONDS: int = 120
     GIT_ALLOWED_HOSTS: str = "github.com"
+
+    # Semgrep
+    SEMGREP_CONFIG: str = "auto"
+    SEMGREP_TIMEOUT_SECONDS: int = 300
     
     # Server
     HOST: str = "0.0.0.0"
