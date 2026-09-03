@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     ANALYSIS_CALLBACK_INTERNAL_TOKEN: str | None = None
     
     # Git clone
-    GIT_CLONE_ROOT_DIR: str = "/tmp/secause-analysis"
+    GIT_CLONE_ROOT_DIR: str | None = None
     GIT_CLONE_TIMEOUT_SECONDS: int = 120
     GIT_ALLOWED_HOSTS: str = "github.com"
     

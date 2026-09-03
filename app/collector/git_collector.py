@@ -96,7 +96,7 @@ def shallow_clone_repository(
         raise GitCloneError("GitHub token must not be empty")
 
     clone_url = validate_clone_url(repository_url)
-    destination = build_repository_path(analysis_id, clone_root_dir)
+    destination = create_repository_path(analysis_id, clone_root_dir)
     timeout = timeout_seconds or settings.GIT_CLONE_TIMEOUT_SECONDS
 
     prepare_clone_destination(destination)
@@ -166,19 +166,42 @@ def shallow_clone_repository(
     return destination
 
 
-# analysis_id별 repository clone 경로를 생성
-def build_repository_path(
+# analysis_id별 임시 repository clone 경로를 생성
+def create_repository_path(
     analysis_id: int,
     clone_root_dir: str | Path | None = None,
 ) -> Path:
-    root_dir = Path(clone_root_dir or settings.GIT_CLONE_ROOT_DIR)
-    return root_dir / f"analysis-{analysis_id}" / "repository"
+    root_dir = resolve_clone_root_dir(clone_root_dir)
+    job_dir = tempfile.mkdtemp(prefix=f"analysis-{analysis_id}-", dir=root_dir)
+    return Path(job_dir) / "repository"
+
+
+# clone root 경로를 준비하고 symlink 사용을 차단
+def resolve_clone_root_dir(clone_root_dir: str | Path | None = None) -> Path:
+    configured_root = (
+        clone_root_dir if clone_root_dir is not None else settings.GIT_CLONE_ROOT_DIR
+    )
+    root_dir = (
+        Path(configured_root).expanduser()
+        if configured_root
+        else Path(tempfile.gettempdir()) / "secause-analysis"
+    )
+
+    if root_dir.exists() and root_dir.is_symlink():
+        raise GitCloneError("Git clone root directory must not be a symlink")
+
+    root_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if root_dir.stat().st_uid != os.getuid():
+        raise GitCloneError("Git clone root directory is owned by another user")
+
+    return root_dir
 
 
 # clone 대상 디렉터리를 비우고 부모 디렉터리를 준비
 def prepare_clone_destination(destination: Path) -> None:
-    cleanup_repository(destination)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    validate_managed_repository_path(destination)
+    if destination.exists():
+        raise GitCloneError("Git clone destination already exists")
 
 
 # clone된 repository 디렉터리를 삭제
@@ -187,18 +210,23 @@ def cleanup_repository(repo_path: str | Path | None) -> None:
         return
 
     path = Path(repo_path)
-    if path.exists():
-        shutil.rmtree(path)
+    validate_managed_repository_path(path)
 
-    cleanup_empty_parent(path.parent)
+    job_dir = path.parent
+    if job_dir.exists():
+        shutil.rmtree(job_dir)
 
 
-# 비어 있는 analysis 작업 디렉터리를 삭제
-def cleanup_empty_parent(path: Path) -> None:
-    try:
-        path.rmdir()
-    except OSError:
-        return
+# 생성한 job별 repository 경로인지 검증
+def validate_managed_repository_path(path: Path) -> None:
+    if path.name != "repository" or not path.parent.name.startswith("analysis-"):
+        raise GitCloneError("Refusing to operate on unmanaged repository path")
+
+    if path.is_symlink() or path.parent.is_symlink():
+        raise GitCloneError("Refusing to operate on symlink repository path")
+
+    if path.parent.exists() and path.parent.stat().st_uid != os.getuid():
+        raise GitCloneError("Refusing to operate on repository path owned by another user")
 
 
 # 임시 askpass script를 삭제
