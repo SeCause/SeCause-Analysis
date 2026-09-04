@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     # Semgrep
     SEMGREP_CONFIG: str = "auto"
     SEMGREP_TIMEOUT_SECONDS: int = 300
+
+    # CodeQL
+    CODEQL_TIMEOUT_SECONDS: int = 900
+    CODEQL_WORK_ROOT_DIR: str | None = None
+    CODEQL_QUERY_SUITE: str = "security-extended"
     
     # Server
     HOST: str = "0.0.0.0"
