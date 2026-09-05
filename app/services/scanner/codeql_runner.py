@@ -1,13 +1,17 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import tempfile
 
 from app.core.config import settings
 from app.schemas.finding import FindingTool
 from app.services.scanner.base import AnalyzerContext, AnalyzerError, RawFinding
+from app.services.scanner.codeql_sarif_parser import parse_sarif_file
+from app.services.scanner.process_runner import execute_command
 
 logger = logging.getLogger(__name__)
+MAX_CODEQL_OUTPUT_CHARS = 1200
 EXCLUDED_SCAN_DIRS = {
     ".git",
     ".hg",
@@ -28,6 +32,14 @@ class CodeQLLanguage:
     name: str
     extensions: tuple[str, ...]
     query_pack: str
+    build_mode_none: bool = False
+
+
+@dataclass(frozen=True)
+class CodeQLCommandPaths:
+    work_dir: Path
+    database_dir: Path
+    sarif_path: Path
 
 
 SUPPORTED_CODEQL_LANGUAGES = (
@@ -45,6 +57,7 @@ SUPPORTED_CODEQL_LANGUAGES = (
         name="java-kotlin",
         extensions=(".java", ".kt", ".kts"),
         query_pack="codeql/java-queries",
+        build_mode_none=True,
     ),
 )
 
@@ -72,8 +85,39 @@ class CodeQLRunner:
             repository_path,
         )
 
-        # 실제 database create/analyze/SARIF parse는 다음 단계에서 language별로 연결
-        return []
+        work_root = create_codeql_analysis_work_root(context.analysis_id)
+        try:
+            findings: list[RawFinding] = []
+            for language in languages:
+                paths = build_codeql_command_paths(work_root, language)
+                paths.work_dir.mkdir(parents=True, exist_ok=True)
+
+                execute_codeql(
+                    build_database_create_command(
+                        repository_path,
+                        language,
+                        paths.database_dir,
+                    ),
+                    "database create",
+                )
+                execute_codeql(
+                    build_database_analyze_command(
+                        language,
+                        paths.database_dir,
+                        paths.sarif_path,
+                    ),
+                    "database analyze",
+                )
+                findings.extend(parse_sarif_file(paths.sarif_path, language))
+
+            logger.info(
+                "CodeQL analysis completed. analysis_id=%s finding_count=%s",
+                context.analysis_id,
+                len(findings),
+            )
+            return findings
+        finally:
+            cleanup_codeql_work_root(work_root)
 
 
 # CodeQL 실행 대상 repository path를 검증
@@ -126,6 +170,92 @@ def create_codeql_work_root() -> Path:
     return root_dir
 
 
+# CodeQL 분석 job별 임시 작업 경로를 생성
+def create_codeql_analysis_work_root(analysis_id: int) -> Path:
+    root_dir = create_codeql_work_root()
+    return Path(tempfile.mkdtemp(prefix=f"analysis-{analysis_id}-", dir=root_dir))
+
+
+# CodeQL language별 database/result 경로를 생성
+def build_codeql_command_paths(
+    work_root: Path,
+    language: CodeQLLanguage,
+) -> CodeQLCommandPaths:
+    language_dir_name = sanitize_path_segment(language.name)
+    work_dir = work_root / language_dir_name
+    return CodeQLCommandPaths(
+        work_dir=work_dir,
+        database_dir=work_dir / "database",
+        sarif_path=work_dir / "result.sarif",
+    )
+
+
+# CodeQL database create command를 구성
+def build_database_create_command(
+    repo_path: Path,
+    language: CodeQLLanguage,
+    database_dir: Path,
+) -> list[str]:
+    command = [
+        "codeql",
+        "database",
+        "create",
+        str(database_dir),
+        f"--language={language.name}",
+        f"--source-root={repo_path}",
+        "--overwrite",
+    ]
+
+    if language.build_mode_none:
+        command.append("--build-mode=none")
+
+    return command
+
+
+# CodeQL CLI command를 실행
+def execute_codeql(command: list[str], stage: str) -> str:
+    return execute_command(
+        command=command,
+        stage=f"CodeQL {stage}",
+        timeout_seconds=settings.CODEQL_TIMEOUT_SECONDS,
+        executable_name="CodeQL",
+        max_output_chars=MAX_CODEQL_OUTPUT_CHARS,
+    )
+
+
+# CodeQL 작업 디렉터리를 삭제
+def cleanup_codeql_work_root(work_root: Path | None) -> None:
+    if work_root is None:
+        return
+
+    shutil.rmtree(work_root, ignore_errors=True)
+
+
+# CodeQL database analyze command를 구성
+def build_database_analyze_command(
+    language: CodeQLLanguage,
+    database_dir: Path,
+    sarif_path: Path,
+) -> list[str]:
+    return [
+        "codeql",
+        "database",
+        "analyze",
+        str(database_dir),
+        build_query_suite(language),
+        "--format=sarif-latest",
+        f"--output={sarif_path}",
+    ]
+
+
 # CodeQL query suite spec을 생성
 def build_query_suite(language: CodeQLLanguage) -> str:
     return f"{language.query_pack}:codeql-suites/{settings.CODEQL_QUERY_SUITE}.qls"
+
+
+# 파일 경로 segment에 안전한 문자만 남김
+def sanitize_path_segment(value: str) -> str:
+    return "".join(
+        character if character.isalnum() or character in {"-", "_"} else "-"
+        for character in value
+    )

@@ -2,12 +2,12 @@ import json
 import logging
 from pathlib import Path
 import re
-import subprocess
 from typing import Any
 
 from app.core.config import settings
 from app.schemas.finding import FindingSeverity, FindingTool
 from app.services.scanner.base import AnalyzerContext, AnalyzerError, RawFinding
+from app.services.scanner.process_runner import execute_command
 
 logger = logging.getLogger(__name__)
 DEFAULT_FINDING_TYPE = "SEMGREP_FINDING"
@@ -64,26 +64,13 @@ def build_semgrep_command(repo_path: Path) -> list[str]:
 
 # Semgrep CLI를 실행하고 stdout JSON 문자열을 반환
 def execute_semgrep(command: list[str]) -> str:
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=settings.SEMGREP_TIMEOUT_SECONDS,
-        )
-    except FileNotFoundError as exc:
-        raise AnalyzerError("Semgrep executable is unavailable") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise AnalyzerError("Semgrep analysis timed out") from exc
-    except OSError as exc:
-        raise AnalyzerError("Semgrep execution failed") from exc
-
-    if result.returncode != 0:
-        stderr = truncate_semgrep_output(result.stderr)
-        raise AnalyzerError(f"Semgrep analysis failed. stderr={stderr}")
-
-    return result.stdout
+    return execute_command(
+        command=command,
+        stage="Semgrep analysis",
+        timeout_seconds=settings.SEMGREP_TIMEOUT_SECONDS,
+        executable_name="Semgrep",
+        max_output_chars=MAX_SEMGREP_OUTPUT_CHARS,
+    )
 
 
 # Semgrep JSON stdout을 RawFinding 목록으로 변환
@@ -164,14 +151,3 @@ def get_line_number(location: Any) -> int | None:
     line_number = location.get("line")
     return line_number if isinstance(line_number, int) else None
 
-
-# Semgrep stderr가 과도하게 길어지지 않도록 제한
-def truncate_semgrep_output(output: str | None) -> str:
-    if not output:
-        return ""
-
-    output = output.strip()
-    if len(output) <= MAX_SEMGREP_OUTPUT_CHARS:
-        return output
-
-    return output[:MAX_SEMGREP_OUTPUT_CHARS] + "...(truncated)"
