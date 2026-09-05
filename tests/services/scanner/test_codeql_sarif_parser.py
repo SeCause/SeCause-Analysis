@@ -51,11 +51,51 @@ class CodeQLSarifParserTest(unittest.TestCase):
             with self.assertRaisesRegex(AnalyzerError, "Failed to parse"):
                 parse_sarif_file(sarif_path, language)
 
+    def test_parse_sarif_file_rejects_array_root(self):
+        self.assert_invalid_sarif_root([])
+
+    def test_parse_sarif_file_rejects_string_root(self):
+        self.assert_invalid_sarif_root("invalid")
+
+    def test_parse_sarif_file_rejects_null_root(self):
+        self.assert_invalid_sarif_root(None)
+
     def test_parse_sarif_file_rejects_missing_file(self):
         language = CodeQLLanguage("python", (".py",), "codeql/python-queries")
 
         with self.assertRaisesRegex(AnalyzerError, "does not exist"):
             parse_sarif_file(Path("/tmp/missing-codeql-output.sarif"), language)
+
+    def test_parse_sarif_file_rejects_malformed_tool_container(self):
+        payload = {"runs": [{"tool": None, "results": []}]}
+
+        with self.assertRaisesRegex(AnalyzerError, "tool must be an object"):
+            self.parse_payload(payload)
+
+    def test_parse_sarif_file_rejects_malformed_driver_container(self):
+        payload = {"runs": [{"tool": {"driver": None}, "results": []}]}
+
+        with self.assertRaisesRegex(AnalyzerError, "driver must be an object"):
+            self.parse_payload(payload)
+
+    def test_parse_sarif_file_rejects_malformed_rules_container(self):
+        payload = {"runs": [{"tool": {"driver": {"rules": {}}}, "results": []}]}
+
+        with self.assertRaisesRegex(AnalyzerError, "rules must be a list"):
+            self.parse_payload(payload)
+
+    def test_parse_sarif_file_rejects_malformed_result_item(self):
+        payload = {
+            "runs": [
+                {
+                    "tool": {"driver": {"rules": []}},
+                    "results": [None],
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(AnalyzerError, "result must be an object"):
+            self.parse_payload(payload)
 
     def test_normalize_rule_type_uses_last_rule_segment(self):
         self.assertEqual(normalize_rule_type("java/xxe.unsafe"), "UNSAFE")
@@ -65,6 +105,18 @@ class CodeQLSarifParserTest(unittest.TestCase):
             map_codeql_severity({}, {}, "error"),
             FindingSeverity.HIGH,
         )
+
+    def assert_invalid_sarif_root(self, payload):
+        with self.assertRaisesRegex(AnalyzerError, "root must be an object"):
+            self.parse_payload(payload)
+
+    def parse_payload(self, payload):
+        language = CodeQLLanguage("python", (".py",), "codeql/python-queries")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sarif_path = Path(tmpdir) / "result.sarif"
+            sarif_path.write_text(json.dumps(payload), encoding="utf-8")
+            return parse_sarif_file(sarif_path, language)
 
 
 def build_sarif_payload() -> dict:

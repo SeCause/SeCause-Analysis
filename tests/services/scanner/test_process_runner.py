@@ -1,6 +1,5 @@
-import subprocess
+import sys
 import unittest
-from unittest.mock import patch
 
 from app.services.scanner.base import AnalyzerError
 from app.services.scanner.process_runner import execute_command, truncate_output
@@ -8,47 +7,60 @@ from app.services.scanner.process_runner import execute_command, truncate_output
 
 class ProcessRunnerTest(unittest.TestCase):
     def test_execute_command_returns_stdout_on_success(self):
-        completed = subprocess.CompletedProcess(
-            args=["tool"],
-            returncode=0,
-            stdout="ok",
-            stderr="",
+        result = execute_command(
+            [sys.executable, "-c", "print('ok', end='')"],
+            "Tool stage",
+            3,
+            "Tool",
+            max_stdout_chars=10,
         )
-
-        with patch("app.services.scanner.process_runner.subprocess.run") as run:
-            run.return_value = completed
-
-            result = execute_command(["tool"], "Tool stage", 3, "Tool")
 
         self.assertEqual(result, "ok")
-        run.assert_called_once_with(
-            ["tool"],
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=3,
-        )
 
     def test_execute_command_raises_analyzer_error_on_non_zero_exit(self):
-        completed = subprocess.CompletedProcess(
-            args=["tool"],
-            returncode=2,
-            stdout="",
-            stderr="x" * 30,
-        )
-
-        with patch("app.services.scanner.process_runner.subprocess.run") as run:
-            run.return_value = completed
-
-            with self.assertRaisesRegex(AnalyzerError, "Tool stage failed"):
-                execute_command(["tool"], "Tool stage", 3, "Tool", max_output_chars=10)
+        with self.assertRaisesRegex(AnalyzerError, "Tool stage failed"):
+            execute_command(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stderr.write('x' * 30); sys.exit(2)",
+                ],
+                "Tool stage",
+                3,
+                "Tool",
+                max_stdout_chars=10,
+                max_error_chars=10,
+            )
 
     def test_execute_command_raises_analyzer_error_on_timeout(self):
-        with patch("app.services.scanner.process_runner.subprocess.run") as run:
-            run.side_effect = subprocess.TimeoutExpired(["tool"], 3)
+        with self.assertRaisesRegex(AnalyzerError, "Tool stage timed out"):
+            execute_command(
+                [sys.executable, "-c", "import time; time.sleep(1)"],
+                "Tool stage",
+                0.01,
+                "Tool",
+                max_stdout_chars=10,
+            )
 
-            with self.assertRaisesRegex(AnalyzerError, "Tool stage timed out"):
-                execute_command(["tool"], "Tool stage", 3, "Tool")
+    def test_execute_command_limits_success_stdout(self):
+        with self.assertRaisesRegex(AnalyzerError, "stdout exceeded"):
+            execute_command(
+                [sys.executable, "-c", "print('x' * 20, end='')"],
+                "Tool stage",
+                3,
+                "Tool",
+                max_stdout_chars=10,
+            )
+
+    def test_execute_command_reports_missing_executable_clearly(self):
+        with self.assertRaisesRegex(AnalyzerError, "Install MissingTool CLI"):
+            execute_command(
+                ["missing-tool-for-secause-test"],
+                "Missing stage",
+                3,
+                "MissingTool",
+                max_stdout_chars=10,
+            )
 
     def test_truncate_output_limits_long_output(self):
         self.assertEqual(truncate_output("abcdef", max_chars=3), "abc...(truncated)")

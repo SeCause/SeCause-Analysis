@@ -12,6 +12,7 @@ from app.services.scanner.process_runner import execute_command
 logger = logging.getLogger(__name__)
 DEFAULT_FINDING_TYPE = "SEMGREP_FINDING"
 MAX_SEMGREP_OUTPUT_CHARS = 1200
+MAX_SEMGREP_STDOUT_CHARS = 50 * 1024 * 1024
 CWE_PATTERN = re.compile(r"CWE-\d+", flags=re.IGNORECASE)
 
 
@@ -69,7 +70,8 @@ def execute_semgrep(command: list[str]) -> str:
         stage="Semgrep analysis",
         timeout_seconds=settings.SEMGREP_TIMEOUT_SECONDS,
         executable_name="Semgrep",
-        max_output_chars=MAX_SEMGREP_OUTPUT_CHARS,
+        max_stdout_chars=MAX_SEMGREP_STDOUT_CHARS,
+        max_error_chars=MAX_SEMGREP_OUTPUT_CHARS,
     )
 
 
@@ -80,6 +82,9 @@ def parse_semgrep_output(output: str) -> list[RawFinding]:
     except json.JSONDecodeError as exc:
         raise AnalyzerError("Failed to parse Semgrep JSON output") from exc
 
+    if not isinstance(payload, dict):
+        raise AnalyzerError("Invalid Semgrep JSON output: root must be an object")
+
     results = payload.get("results", [])
     if not isinstance(results, list):
         raise AnalyzerError("Invalid Semgrep JSON output: results must be a list")
@@ -89,7 +94,13 @@ def parse_semgrep_output(output: str) -> list[RawFinding]:
 
 # Semgrep result 1건을 RawFinding으로 변환
 def convert_semgrep_result(result: dict[str, Any]) -> RawFinding:
+    if not isinstance(result, dict):
+        raise AnalyzerError("Invalid Semgrep JSON output: result must be an object")
+
     extra = result.get("extra", {})
+    if not isinstance(extra, dict):
+        raise AnalyzerError("Invalid Semgrep JSON output: extra must be an object")
+
     metadata = extra.get("metadata", {})
     rule_id = result.get("check_id")
 
@@ -106,7 +117,7 @@ def convert_semgrep_result(result: dict[str, Any]) -> RawFinding:
         evidence=extra.get("lines"),
         metadata={
             "semgrep_metadata": metadata,
-            "fingerprint": result.get("extra", {}).get("fingerprint"),
+            "fingerprint": extra.get("fingerprint"),
         },
     )
 
@@ -150,4 +161,3 @@ def get_line_number(location: Any) -> int | None:
 
     line_number = location.get("line")
     return line_number if isinstance(line_number, int) else None
-

@@ -12,6 +12,7 @@ from app.services.scanner.process_runner import execute_command
 
 logger = logging.getLogger(__name__)
 MAX_CODEQL_OUTPUT_CHARS = 1200
+MAX_CODEQL_STDOUT_CHARS = 10 * 1024 * 1024
 EXCLUDED_SCAN_DIRS = {
     ".git",
     ".hg",
@@ -219,7 +220,8 @@ def execute_codeql(command: list[str], stage: str) -> str:
         stage=f"CodeQL {stage}",
         timeout_seconds=settings.CODEQL_TIMEOUT_SECONDS,
         executable_name="CodeQL",
-        max_output_chars=MAX_CODEQL_OUTPUT_CHARS,
+        max_stdout_chars=MAX_CODEQL_STDOUT_CHARS,
+        max_error_chars=MAX_CODEQL_OUTPUT_CHARS,
     )
 
 

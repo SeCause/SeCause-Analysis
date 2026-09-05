@@ -28,6 +28,9 @@ def parse_sarif_file(
     except json.JSONDecodeError as exc:
         raise AnalyzerError("Failed to parse CodeQL SARIF output") from exc
 
+    if not isinstance(payload, dict):
+        raise AnalyzerError("Invalid CodeQL SARIF output: root must be an object")
+
     runs = payload.get("runs", [])
     if not isinstance(runs, list):
         raise AnalyzerError("Invalid CodeQL SARIF output: runs must be a list")
@@ -35,7 +38,7 @@ def parse_sarif_file(
     findings: list[RawFinding] = []
     for run in runs:
         if not isinstance(run, dict):
-            continue
+            raise AnalyzerError("Invalid CodeQL SARIF output: run must be an object")
 
         rules = build_sarif_rule_map(run)
         results = run.get("results", [])
@@ -45,7 +48,6 @@ def parse_sarif_file(
         findings.extend(
             convert_sarif_result(result, rules, language)
             for result in results
-            if isinstance(result, dict)
         )
 
     return findings
@@ -53,9 +55,17 @@ def parse_sarif_file(
 
 # SARIF rule descriptor를 rule id 기준으로 매핑
 def build_sarif_rule_map(run: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    rules = run.get("tool", {}).get("driver", {}).get("rules", [])
+    tool = run.get("tool", {})
+    if not isinstance(tool, dict):
+        raise AnalyzerError("Invalid CodeQL SARIF output: tool must be an object")
+
+    driver = tool.get("driver", {})
+    if not isinstance(driver, dict):
+        raise AnalyzerError("Invalid CodeQL SARIF output: driver must be an object")
+
+    rules = driver.get("rules", [])
     if not isinstance(rules, list):
-        return {}
+        raise AnalyzerError("Invalid CodeQL SARIF output: rules must be a list")
 
     return {
         rule["id"]: rule
@@ -70,6 +80,9 @@ def convert_sarif_result(
     rules: dict[str, dict[str, Any]],
     language: CodeQLLanguage,
 ) -> RawFinding:
+    if not isinstance(result, dict):
+        raise AnalyzerError("Invalid CodeQL SARIF output: result must be an object")
+
     rule_id = result.get("ruleId")
     rule = rules.get(rule_id, {}) if isinstance(rule_id, str) else {}
     location = get_primary_location(result)
