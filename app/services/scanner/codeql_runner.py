@@ -33,6 +33,7 @@ class CodeQLLanguage:
     name: str
     extensions: tuple[str, ...]
     query_pack: str
+    suite_file_prefix: str
     build_mode_none: bool = False
 
 
@@ -48,16 +49,19 @@ SUPPORTED_CODEQL_LANGUAGES = (
         name="python",
         extensions=(".py",),
         query_pack="codeql/python-queries",
+        suite_file_prefix="python",
     ),
     CodeQLLanguage(
         name="javascript-typescript",
         extensions=(".js", ".jsx", ".ts", ".tsx"),
         query_pack="codeql/javascript-queries",
+        suite_file_prefix="javascript",
     ),
     CodeQLLanguage(
         name="java-kotlin",
         extensions=(".java", ".kt", ".kts"),
         query_pack="codeql/java-queries",
+        suite_file_prefix="java",
         build_mode_none=True,
     ),
 )
@@ -271,7 +275,8 @@ def build_database_analyze_command(
 
 # CodeQL query suite spec을 생성
 def build_query_suite(language: CodeQLLanguage) -> str:
-    return f"{language.query_pack}:codeql-suites/{settings.CODEQL_QUERY_SUITE}.qls"
+    suite_file_name = f"{language.suite_file_prefix}-{settings.CODEQL_QUERY_SUITE}.qls"
+    return f"{language.query_pack}:codeql-suites/{suite_file_name}"
 
 
 # 파일 경로 segment에 안전한 문자만 남김

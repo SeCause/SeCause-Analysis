@@ -19,6 +19,7 @@ class CodeQLSarifParserTest(unittest.TestCase):
             name="python",
             extensions=(".py",),
             query_pack="codeql/python-queries",
+            suite_file_prefix="python",
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -42,7 +43,7 @@ class CodeQLSarifParserTest(unittest.TestCase):
         self.assertEqual(finding.metadata["language"], "python")
 
     def test_parse_sarif_file_rejects_invalid_json(self):
-        language = CodeQLLanguage("python", (".py",), "codeql/python-queries")
+        language = CodeQLLanguage("python", (".py",), "codeql/python-queries", "python")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             sarif_path = Path(tmpdir) / "bad.sarif"
@@ -61,7 +62,7 @@ class CodeQLSarifParserTest(unittest.TestCase):
         self.assert_invalid_sarif_root(None)
 
     def test_parse_sarif_file_rejects_missing_file(self):
-        language = CodeQLLanguage("python", (".py",), "codeql/python-queries")
+        language = CodeQLLanguage("python", (".py",), "codeql/python-queries", "python")
 
         with self.assertRaisesRegex(AnalyzerError, "does not exist"):
             parse_sarif_file(Path("/tmp/missing-codeql-output.sarif"), language)
@@ -111,7 +112,7 @@ class CodeQLSarifParserTest(unittest.TestCase):
             self.parse_payload(payload)
 
     def parse_payload(self, payload):
-        language = CodeQLLanguage("python", (".py",), "codeql/python-queries")
+        language = CodeQLLanguage("python", (".py",), "codeql/python-queries", "python")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             sarif_path = Path(tmpdir) / "result.sarif"

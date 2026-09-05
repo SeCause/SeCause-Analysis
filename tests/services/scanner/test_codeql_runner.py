@@ -7,6 +7,8 @@ from unittest.mock import patch
 from app.services.scanner.base import AnalyzerContext, AnalyzerError
 from app.services.scanner.codeql_runner import (
     CodeQLRunner,
+    SUPPORTED_CODEQL_LANGUAGES,
+    build_query_suite,
     cleanup_codeql_work_root,
     create_codeql_analysis_work_root,
 )
@@ -66,6 +68,25 @@ class CodeQLRunnerTest(unittest.TestCase):
                     cleanup_codeql_work_root(outside_path)
 
             self.assertTrue(outside_path.exists())
+
+    def test_build_query_suite_uses_language_specific_suite_file(self):
+        suites = {
+            language.name: build_query_suite(language)
+            for language in SUPPORTED_CODEQL_LANGUAGES
+        }
+
+        self.assertEqual(
+            suites["python"],
+            "codeql/python-queries:codeql-suites/python-security-extended.qls",
+        )
+        self.assertEqual(
+            suites["javascript-typescript"],
+            "codeql/javascript-queries:codeql-suites/javascript-security-extended.qls",
+        )
+        self.assertEqual(
+            suites["java-kotlin"],
+            "codeql/java-queries:codeql-suites/java-security-extended.qls",
+        )
 
 
 def write_empty_sarif_on_analyze(command: list[str], stage: str) -> str:
