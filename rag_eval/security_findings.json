@@ -1,0 +1,122 @@
+[
+  {
+    "name": "sql_injection_java",
+    "finding": {
+      "type": "SQL_INJECTION",
+      "cwe_id": "CWE-89",
+      "severity": "HIGH",
+      "file_path": "src/main/java/UserController.java",
+      "message": "User input is used directly in SQL query.",
+      "evidence": "Statement.executeQuery(query)"
+    },
+    "expected_terms": ["SQL Injection", "PreparedStatement", "CWE-89"]
+  },
+  {
+    "name": "xss_template",
+    "finding": {
+      "type": "CROSS_SITE_SCRIPTING",
+      "cwe_id": "CWE-79",
+      "severity": "HIGH",
+      "file_path": "src/main/resources/templates/profile.html",
+      "message": "User input is rendered into HTML without escaping.",
+      "evidence": "{{ userInput }}"
+    },
+    "expected_terms": ["Cross Site Scripting", "XSS", "CWE-79"]
+  },
+  {
+    "name": "ssrf_url_fetch",
+    "finding": {
+      "type": "SSRF",
+      "cwe_id": "CWE-918",
+      "severity": "HIGH",
+      "file_path": "src/main/java/ImageProxyController.java",
+      "message": "Server fetches a user-controlled URL.",
+      "evidence": "new URL(request.getParameter(\"url\")).openConnection()"
+    },
+    "expected_terms": ["Server Side Request Forgery", "SSRF", "CWE-918"]
+  },
+  {
+    "name": "path_traversal_file_read",
+    "finding": {
+      "type": "PATH_TRAVERSAL",
+      "cwe_id": "CWE-22",
+      "severity": "HIGH",
+      "file_path": "src/main/java/FileDownloadController.java",
+      "message": "User input is used to build a file path.",
+      "evidence": "Paths.get(baseDir, request.getParameter(\"file\"))"
+    },
+    "expected_terms": ["Path Traversal", "CWE-22", "File Upload"]
+  },
+  {
+    "name": "command_injection",
+    "finding": {
+      "type": "OS_COMMAND_INJECTION",
+      "cwe_id": "CWE-78",
+      "severity": "CRITICAL",
+      "file_path": "src/main/java/BackupController.java",
+      "message": "User input is passed to a shell command.",
+      "evidence": "Runtime.getRuntime().exec(\"tar \" + path)"
+    },
+    "expected_terms": ["OS Command Injection", "Command Injection", "CWE-78"]
+  },
+  {
+    "name": "hardcoded_secret",
+    "finding": {
+      "type": "HARDCODED_CREDENTIALS",
+      "cwe_id": "CWE-798",
+      "severity": "HIGH",
+      "file_path": "src/main/resources/application.yml",
+      "message": "A hardcoded credential was detected.",
+      "evidence": "password: admin123"
+    },
+    "expected_terms": ["Hard-coded Credentials", "Secrets Management", "CWE-798"]
+  },
+  {
+    "name": "deserialization",
+    "finding": {
+      "type": "INSECURE_DESERIALIZATION",
+      "cwe_id": "CWE-502",
+      "severity": "HIGH",
+      "file_path": "src/main/java/SessionImportController.java",
+      "message": "Untrusted data is deserialized.",
+      "evidence": "new ObjectInputStream(input).readObject()"
+    },
+    "expected_terms": ["Deserialization", "CWE-502", "ObjectInputStream"]
+  },
+  {
+    "name": "csrf_missing_token",
+    "finding": {
+      "type": "CSRF",
+      "cwe_id": "CWE-352",
+      "severity": "MEDIUM",
+      "file_path": "src/main/java/AdminController.java",
+      "message": "State-changing request does not require a CSRF token.",
+      "evidence": "@PostMapping(\"/admin/delete\")"
+    },
+    "expected_terms": ["Cross-Site Request Forgery", "CSRF", "CWE-352"]
+  },
+  {
+    "name": "xxe_xml_parser",
+    "finding": {
+      "type": "XXE",
+      "cwe_id": "CWE-611",
+      "severity": "HIGH",
+      "file_path": "src/main/java/XmlImportService.java",
+      "message": "XML parser allows external entities.",
+      "evidence": "DocumentBuilderFactory.newInstance()"
+    },
+    "expected_terms": ["XML External Entity", "XXE", "CWE-611"]
+  },
+  {
+    "name": "docker_root_user",
+    "finding": {
+      "type": "DOCKER_ROOT_USER",
+      "cwe_id": null,
+      "severity": "MEDIUM",
+      "file_path": "Dockerfile",
+      "message": "Container runs as root user.",
+      "evidence": "FROM python:3.11-slim"
+    },
+    "expected_terms": ["Docker Security", "USER", "root"]
+  }
+]
