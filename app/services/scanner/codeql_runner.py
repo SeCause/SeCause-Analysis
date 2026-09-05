@@ -228,7 +228,26 @@ def cleanup_codeql_work_root(work_root: Path | None) -> None:
     if work_root is None:
         return
 
-    shutil.rmtree(work_root, ignore_errors=True)
+    if not work_root.exists():
+        return
+
+    if not is_safe_codeql_analysis_work_root(work_root):
+        raise AnalyzerError(f"Unsafe CodeQL work directory cleanup target: {work_root}")
+
+    try:
+        shutil.rmtree(work_root)
+    except OSError:
+        logger.warning("Failed to cleanup CodeQL work directory: %s", work_root)
+
+
+# CodeQL cleanup 대상이 전용 root 하위의 분석 임시 디렉터리인지 검증
+def is_safe_codeql_analysis_work_root(work_root: Path) -> bool:
+    if work_root.is_symlink() or not work_root.name.startswith("analysis-"):
+        return False
+
+    codeql_root = create_codeql_work_root().resolve()
+    work_root_path = work_root.resolve(strict=False)
+    return work_root_path.parent == codeql_root
 
 
 # CodeQL database analyze command를 구성
