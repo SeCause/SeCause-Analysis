@@ -1,6 +1,6 @@
-from app.schemas.finding import Finding, FindingSeverity
+from app.schemas.finding import Finding, FindingSeverity, FindingTool
 
-DeduplicationKey = tuple[str | None, str, str, int | None]
+DeduplicationKey = tuple[str, str, int | None]
 
 SEVERITY_RANK = {
     FindingSeverity.INFO: 0,
@@ -8,6 +8,12 @@ SEVERITY_RANK = {
     FindingSeverity.MEDIUM: 2,
     FindingSeverity.HIGH: 3,
     FindingSeverity.CRITICAL: 4,
+}
+
+TOOL_RANK = {
+    FindingTool.INFRA: 0,
+    FindingTool.SEMGREP: 1,
+    FindingTool.CODEQL: 2,
 }
 
 
@@ -24,12 +30,11 @@ def deduplicate_findings(findings: list[Finding]) -> list[Finding]:
     return list(deduplicated.values())
 
 
-# CWE, type, file path, 시작 라인을 기준으로 중복 판단 key 생성
+# 취약점 식별값, file path, 시작 라인을 기준으로 중복 판단 key 생성
 def build_deduplication_key(finding: Finding) -> DeduplicationKey:
     return (
-        finding.cwe_id,
-        finding.type,
-        finding.file_path,
+        vulnerability_identity(finding),
+        normalize_file_path(finding.file_path),
         finding.line_start,
     )
 
@@ -42,12 +47,43 @@ def should_replace_finding(current: Finding, candidate: Finding) -> bool:
     if candidate_rank != current_rank:
         return candidate_rank > current_rank
 
-    return evidence_length(candidate) > evidence_length(current)
+    current_evidence_length = evidence_length(current)
+    candidate_evidence_length = evidence_length(candidate)
+    if candidate_evidence_length != current_evidence_length:
+        return candidate_evidence_length > current_evidence_length
+
+    return tool_rank(candidate.tool) > tool_rank(current.tool)
+
+
+# CWE가 있으면 CWE를, 없으면 type을 취약점 식별값으로 사용
+def vulnerability_identity(finding: Finding) -> str:
+    return normalize_key_part(finding.cwe_id) or normalize_key_part(finding.type)
+
+
+# file path 중복 비교용 문자열을 생성
+def normalize_file_path(file_path: str) -> str:
+    return normalize_key_part(file_path)
+
+
+# 중복 비교용 문자열을 trim/lowercase 형태로 정규화
+def normalize_key_part(value: str | None) -> str:
+    return str(value or "").strip().lower()
 
 
 # severity enum/string 값을 비교 가능한 우선순위 숫자로 변환
 def severity_rank(severity: FindingSeverity | str) -> int:
-    return SEVERITY_RANK[FindingSeverity(severity)]
+    try:
+        return SEVERITY_RANK[FindingSeverity(severity)]
+    except ValueError:
+        return 0
+
+
+# analyzer tool enum/string 값을 비교 가능한 우선순위 숫자로 변환
+def tool_rank(tool: FindingTool | str) -> int:
+    try:
+        return TOOL_RANK[FindingTool(tool)]
+    except ValueError:
+        return 0
 
 
 # evidence가 풍부한 finding을 고르기 위해 evidence 길이 계산
