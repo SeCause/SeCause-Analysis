@@ -8,8 +8,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system app && \
-    adduser --system --ingroup app appuser
+# [추가] git: 저장소 clone에 필요, ca-certificates: HTTPS 통신에 필요
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# [변경] --system 대신 홈 디렉터리를 가진 사용자로 생성
+RUN addgroup --gid 10001 app && \
+    adduser --uid 10001 --gid 10001 --home /home/appuser --shell /usr/sbin/nologin \
+            --disabled-password --gecos "" appuser
+ENV HOME=/home/appuser
+
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
