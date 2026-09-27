@@ -17,7 +17,7 @@ from app.services.callback.spring_client import (
 from app.services.llm.explanation_generator import enrich_finding_with_explanation
 from app.services.normalizer.deduplicator import deduplicate_findings
 from app.services.normalizer.finding_normalizer import normalize_findings
-from app.services.rag.hybrid_search import search_evidence_for_finding
+from app.services.rag.hybrid_search import search_evidence_for_findings
 from app.services.scanner.base import AnalyzerContext, AnalyzerRunner, RawFinding
 from app.services.scanner.codeql_runner import CodeQLRunner
 from app.services.scanner.semgrep_runner import SemgrepRunner
@@ -63,13 +63,20 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         context.normalized_findings = normalize_findings(raw_findings) #정규화 후
         context.normalized_findings = deduplicate_findings(context.normalized_findings) #중복
 
+        evidence_by_finding = search_evidence_for_findings(
+            context.normalized_findings
+        )
+
         #LLM 설명 추가
         context.enriched_findings = [
             enrich_finding_with_explanation(
                 finding,
-                search_evidence_for_finding(finding),
+                evidence_documents,
             )
-            for finding in context.normalized_findings
+            for finding, evidence_documents in zip(
+                context.normalized_findings,
+                evidence_by_finding,
+            )
         ]
 
         success_payload = build_success_callback_payload(context)

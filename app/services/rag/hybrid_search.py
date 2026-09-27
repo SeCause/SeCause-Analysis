@@ -34,10 +34,30 @@ def search_evidence_for_finding(finding: Finding) -> list[EvidenceDocument]:
     return search_evidence(build_rag_query(finding))
 
 
+# 동기 분석 job에서 모든 Finding을 하나의 event loop로 검색
+def search_evidence_for_findings(
+    findings: list[Finding],
+) -> list[list[EvidenceDocument]]:
+    queries = [build_rag_query(finding) for finding in findings]
+    return asyncio.run(search_evidence_batch_async(queries))
+
+
 # 동기 분석 job에서 호출하기 위한 검색 진입점
 def search_evidence(query: RagQuery) -> list[EvidenceDocument]:
+    return asyncio.run(search_evidence_safely_async(query))
+
+
+# 여러 query를 같은 event loop에서 순차적으로 검색
+async def search_evidence_batch_async(
+    queries: list[RagQuery],
+) -> list[list[EvidenceDocument]]:
+    return [await search_evidence_safely_async(query) for query in queries]
+
+
+# query 단위 검색 실패가 다른 Finding 처리를 막지 않도록 빈 결과로 fallback
+async def search_evidence_safely_async(query: RagQuery) -> list[EvidenceDocument]:
     try:
-        return asyncio.run(search_evidence_async(query))
+        return await search_evidence_async(query)
     except Exception:
         logger.exception(
             "RAG search failed. cwe_id=%s type=%s",
