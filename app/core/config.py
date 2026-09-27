@@ -39,8 +39,8 @@ class Settings(BaseSettings):
 
     # Spring Callback
     SPRING_CALLBACK_BASE_URL: str = "http://localhost:8080"
-    SPRING_SUCCESS_CALLBACK_PATH: str = "/internal/analysis/callback/success"
-    SPRING_FAILURE_CALLBACK_PATH: str = "/internal/analysis/callback/failure"
+    SPRING_SUCCESS_CALLBACK_PATH: str = "/api/internal/analyses/{analysisId}/result"
+    SPRING_FAILURE_CALLBACK_PATH: str = "/api/internal/analyses/{analysisId}/failure"
     SPRING_CALLBACK_TIMEOUT_SECONDS: float = 10.0
     SPRING_CALLBACK_MAX_RETRIES: int = 2
     ANALYSIS_CALLBACK_INTERNAL_TOKEN: str | None = None
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     GIT_ALLOWED_HOSTS: str = "github.com"
 
     # Semgrep
-    SEMGREP_CONFIG: str = "auto"
+    SEMGREP_CONFIG: str = "p/default"
     SEMGREP_TIMEOUT_SECONDS: int = 300
 
     # CodeQL

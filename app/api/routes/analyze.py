@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from redis.exceptions import RedisError
 
+from app.api.dependencies import verify_internal_token
 from app.jobs.analysis_job import run_analysis_job
 from app.jobs.queue import get_analysis_queue
 from app.jobs.secret_store import delete_github_token_reference, store_github_token
@@ -29,6 +30,7 @@ def cleanup_token_reference(token_reference: str | None, analysis_id: int) -> No
     "/internal/analyze",
     response_model=AnalyzeResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(verify_internal_token)],
 )
 async def analyze(request: AnalyzeRequest):
     """

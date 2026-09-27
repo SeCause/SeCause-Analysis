@@ -24,6 +24,11 @@ from app.services.scanner.infra_runner import InfraRunner
 from app.services.scanner.semgrep_runner import SemgrepRunner
 
 logger = logging.getLogger(__name__)
+MAX_SCANNER_ERROR_SUMMARY_CHARS = 500
+
+
+class AllAnalyzersFailedError(RuntimeError):
+    pass
 
 
 def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -138,6 +143,7 @@ def run_analyzers(context: AnalysisJobContext) -> list[RawFinding]:
     analyzer_context = AnalyzerContext.from_pipeline_context(context)
     repo_path = context.repo_path or "repo-not-cloned"
     raw_findings: list[RawFinding] = []
+    successful_scanner_count = 0
 
     for runner in get_analyzer_runners():
         logger.info(
@@ -145,14 +151,38 @@ def run_analyzers(context: AnalysisJobContext) -> list[RawFinding]:
             runner.tool.value,
             context.analysis_id,
         )
-        raw_findings.extend(runner.run(repo_path, analyzer_context))
+        try:
+            raw_findings.extend(runner.run(repo_path, analyzer_context))
+            successful_scanner_count += 1
+        except Exception as exc:
+            error_summary = summarize_scanner_error(runner, exc)
+            context.failed_scanners.append(error_summary)
+            logger.warning(
+                "Analysis stage failed; continuing with remaining scanners. stage=%s analysis_id=%s error_type=%s",
+                runner.tool.value,
+                context.analysis_id,
+                exc.__class__.__name__,
+            )
+            continue
         logger.info(
             "Analysis stage completed. stage=%s analysis_id=%s",
             runner.tool.value,
             context.analysis_id,
         )
 
+    if successful_scanner_count == 0:
+        raise AllAnalyzersFailedError(
+            "All scanners failed: " + "; ".join(context.failed_scanners)
+        )
+
     return raw_findings
+
+
+# callback에서 실패 스캐너와 원인을 식별할 수 있는 제한 길이 요약 생성
+def summarize_scanner_error(runner: AnalyzerRunner, exc: Exception) -> str:
+    detail = str(exc).strip() or "no error details"
+    summary = f"{runner.tool.value}: {exc.__class__.__name__}: {detail}"
+    return summary[:MAX_SCANNER_ERROR_SUMMARY_CHARS]
 
 
 # pipeline에서 사용할 analyzer runner 목록을 제공
@@ -173,6 +203,7 @@ def build_success_callback_payload(
         repository_id=context.repository_id,
         findings=context.enriched_findings,
         summary=AnalysisSummary(total_count=len(context.enriched_findings)),
+        failed_scanners=context.failed_scanners,
     )
 
 

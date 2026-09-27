@@ -25,10 +25,11 @@ class SemgrepRunner:
         command = build_semgrep_command(repository_path)
 
         logger.info(
-            "Semgrep analysis started. analysis_id=%s repository_id=%s repo_path=%s",
+            "Semgrep analysis started. analysis_id=%s repository_id=%s repo_path=%s config=%s",
             context.analysis_id,
             context.repository_id,
             repository_path,
+            settings.SEMGREP_CONFIG,
         )
 
         output = execute_semgrep(command)
@@ -57,6 +58,7 @@ def build_semgrep_command(repo_path: Path) -> list[str]:
         "semgrep",
         "--config",
         settings.SEMGREP_CONFIG,
+        "--metrics=off",
         "--json",
         "--quiet",
         str(repo_path),
