@@ -36,6 +36,7 @@ class AnalysisSuccessCallbackPayload(CallbackPayload):
     status: AnalysisStatus = AnalysisStatus.COMPLETED
     findings: list[Finding] = Field(default_factory=list)
     summary: AnalysisSummary
+    failed_scanners: list[str] = Field(default_factory=list)
 
 
 class AnalysisFailureCallbackPayload(CallbackPayload):
@@ -70,7 +71,10 @@ class SpringCallbackClient:
             payload.repository_id,
             len(payload.findings),
         )
-        self._post_callback(self.success_path, payload)
+        self._post_callback(
+            _format_callback_path(self.success_path, payload.analysis_id),
+            payload,
+        )
 
     # 분석 실패 payload를 Spring callback API로 전송
     def send_failure(self, payload: AnalysisFailureCallbackPayload) -> None:
@@ -81,7 +85,10 @@ class SpringCallbackClient:
             payload.failed_stage,
             payload.error_code,
         )
-        self._post_callback(self.failure_path, payload)
+        self._post_callback(
+            _format_callback_path(self.failure_path, payload.analysis_id),
+            payload,
+        )
 
     # callback HTTP POST 수행
     def _post_callback(self, path: str, payload: CallbackPayload) -> None:
@@ -138,3 +145,11 @@ def _build_internal_token_headers(internal_token: str | None) -> dict[str, str] 
         return None
 
     return {"X-Internal-Token": internal_token}
+
+
+# callback 설정 경로의 analysis ID placeholder를 실제 값으로 치환
+def _format_callback_path(path: str, analysis_id: int | None) -> str:
+    return path.replace("{analysisId}", str(analysis_id)).replace(
+        "{analysis_id}",
+        str(analysis_id),
+    )

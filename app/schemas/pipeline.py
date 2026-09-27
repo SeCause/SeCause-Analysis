@@ -16,6 +16,7 @@ class AnalysisJobContext(AnalysisTargetPayload):
     raw_findings: list[dict[str, Any]] = Field(default_factory=list)
     normalized_findings: list[Finding] = Field(default_factory=list)
     enriched_findings: list[Finding] = Field(default_factory=list)
+    failed_scanners: list[str] = Field(default_factory=list)
 
     @classmethod
     def from_job_payload(cls, payload: dict[str, Any]) -> "AnalysisJobContext":

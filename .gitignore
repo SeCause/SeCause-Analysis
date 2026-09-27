@@ -220,3 +220,7 @@ __marimo__/
 # RAG source documents
 rag_documents/raw/
 rag_documents/processed/
+
+/benchmark/
+/benchmarks/
+AUDIT_REPORT.md

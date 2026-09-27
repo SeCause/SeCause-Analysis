@@ -1,12 +1,24 @@
 import json
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from app.schemas.finding import FindingSeverity, FindingTool
 from app.services.scanner.base import AnalyzerError
-from app.services.scanner.semgrep_runner import parse_semgrep_output
+from app.services.scanner.semgrep_runner import build_semgrep_command, parse_semgrep_output
 
 
 class SemgrepRunnerTest(unittest.TestCase):
+    def test_build_command_uses_config_and_disables_metrics(self):
+        with patch(
+            "app.services.scanner.semgrep_runner.settings.SEMGREP_CONFIG",
+            "p/custom",
+        ):
+            command = build_semgrep_command(Path("/tmp/repository"))
+
+        self.assertEqual(command[0:3], ["semgrep", "--config", "p/custom"])
+        self.assertIn("--metrics=off", command)
+
     def test_parse_semgrep_output_maps_result_to_raw_finding(self):
         payload = {
             "results": [
