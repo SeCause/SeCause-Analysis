@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from redis.exceptions import RedisError
 
 from app.api.dependencies import verify_internal_token
+from app.core.config import settings
 from app.jobs.analysis_job import run_analysis_job
 from app.jobs.queue import get_analysis_queue
 from app.jobs.secret_store import delete_github_token_reference, store_github_token
@@ -45,6 +46,7 @@ async def analyze(request: AnalyzeRequest):
         job = queue.enqueue(
             run_analysis_job,
             request.to_job_payload(github_token_reference),
+            job_timeout=settings.ANALYSIS_JOB_TIMEOUT_SECONDS,
         )
     except RedisError as exc:
         cleanup_token_reference(github_token_reference, request.analysis_id)

@@ -37,9 +37,10 @@ def search_evidence_for_finding(finding: Finding) -> list[EvidenceDocument]:
 # 동기 분석 job에서 모든 Finding을 하나의 event loop로 검색
 def search_evidence_for_findings(
     findings: list[Finding],
+    analysis_id: int | None = None,
 ) -> list[list[EvidenceDocument]]:
     queries = [build_rag_query(finding) for finding in findings]
-    return asyncio.run(search_evidence_batch_async(queries))
+    return asyncio.run(search_evidence_batch_async(queries, analysis_id))
 
 
 # 동기 분석 job에서 호출하기 위한 검색 진입점
@@ -50,8 +51,31 @@ def search_evidence(query: RagQuery) -> list[EvidenceDocument]:
 # 여러 query를 같은 event loop에서 순차적으로 검색
 async def search_evidence_batch_async(
     queries: list[RagQuery],
+    analysis_id: int | None = None,
 ) -> list[list[EvidenceDocument]]:
-    return [await search_evidence_safely_async(query) for query in queries]
+    results: list[list[EvidenceDocument]] = []
+    finding_total = len(queries)
+
+    for finding_index, query in enumerate(queries, start=1):
+        logger.info(
+            "Finding RAG search started. analysis_id=%s finding_index=%s finding_total=%s type=%s cwe_id=%s",
+            analysis_id,
+            finding_index,
+            finding_total,
+            query.vulnerability_type,
+            query.cwe_id,
+        )
+        evidence_documents = await search_evidence_safely_async(query)
+        results.append(evidence_documents)
+        logger.info(
+            "Finding RAG search completed. analysis_id=%s finding_index=%s finding_total=%s evidence_count=%s",
+            analysis_id,
+            finding_index,
+            finding_total,
+            len(evidence_documents),
+        )
+
+    return results
 
 
 # query 단위 검색 실패가 다른 Finding 처리를 막지 않도록 빈 결과로 fallback

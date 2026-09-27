@@ -64,20 +64,36 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         context.normalized_findings = deduplicate_findings(context.normalized_findings) #중복
 
         evidence_by_finding = search_evidence_for_findings(
-            context.normalized_findings
+            context.normalized_findings,
+            analysis_id=context.analysis_id,
         )
 
         #LLM 설명 추가
-        context.enriched_findings = [
-            enrich_finding_with_explanation(
+        context.enriched_findings = []
+        finding_total = len(context.normalized_findings)
+        for finding_index, (finding, evidence_documents) in enumerate(
+            zip(context.normalized_findings, evidence_by_finding),
+            start=1,
+        ):
+            logger.info(
+                "Finding enrichment started. analysis_id=%s finding_index=%s finding_total=%s tool=%s type=%s",
+                context.analysis_id,
+                finding_index,
+                finding_total,
+                finding.tool,
+                finding.type,
+            )
+            enriched_finding = enrich_finding_with_explanation(
                 finding,
                 evidence_documents,
             )
-            for finding, evidence_documents in zip(
-                context.normalized_findings,
-                evidence_by_finding,
+            context.enriched_findings.append(enriched_finding)
+            logger.info(
+                "Finding enrichment completed. analysis_id=%s finding_index=%s finding_total=%s",
+                context.analysis_id,
+                finding_index,
+                finding_total,
             )
-        ]
 
         success_payload = build_success_callback_payload(context)
         callback_client.send_success(success_payload)
