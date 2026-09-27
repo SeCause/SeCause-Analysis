@@ -7,8 +7,8 @@ from app.jobs.analysis_job import (
     get_analyzer_runners,
     run_analysis_job,
 )
-from app.schemas.finding import FindingTool
-from app.services.scanner.base import AnalyzerError
+from app.schemas.finding import FindingSeverity, FindingTool
+from app.services.scanner.base import AnalyzerError, RawFinding
 
 
 class AnalysisJobTest(unittest.TestCase):
@@ -65,6 +65,31 @@ class AnalysisJobTest(unittest.TestCase):
             [FindingTool.SEMGREP, FindingTool.CODEQL],
         )
 
+    def test_multiple_findings_log_enrichment_progress(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = [
+            build_raw_finding("FIRST", 10),
+            build_raw_finding("SECOND", 20),
+        ]
+
+        with self.pipeline_patches([runner]), patch(
+            "app.jobs.analysis_job.search_evidence_for_findings",
+            return_value=[[], []],
+        ), patch(
+            "app.jobs.analysis_job.enrich_finding_with_explanation",
+            side_effect=lambda finding, _evidence: finding,
+        ), self.assertLogs(
+            "app.jobs.analysis_job",
+            level="INFO",
+        ) as logs:
+            result = run_analysis_job(self.payload)
+
+        self.assertEqual(result["finding_count"], 2)
+        output = "\n".join(logs.output)
+        self.assertIn("finding_index=1 finding_total=2", output)
+        self.assertIn("finding_index=2 finding_total=2", output)
+        self.assertIn("Finding enrichment completed", output)
+
     def test_missing_analysis_id_skips_failure_callback(self):
         callback = Mock()
 
@@ -114,6 +139,17 @@ class _CallbackPatchContext:
 
     def __exit__(self, exc_type, exc_value, traceback):
         return self.stack.__exit__(exc_type, exc_value, traceback)
+
+
+def build_raw_finding(finding_type: str, line_start: int) -> RawFinding:
+    return RawFinding(
+        tool=FindingTool.SEMGREP,
+        type=finding_type,
+        severity=FindingSeverity.HIGH,
+        file_path="src/example.py",
+        message="example finding",
+        line_start=line_start,
+    )
 
 
 if __name__ == "__main__":

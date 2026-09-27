@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Queue
     REDIS_URL: str = "redis://localhost:6379/0"
     ANALYSIS_QUEUE_NAME: str = "analysis"
+    ANALYSIS_JOB_TIMEOUT_SECONDS: int = 1800
     GITHUB_TOKEN_TTL_SECONDS: int = 3600
 
     # Spring Callback
