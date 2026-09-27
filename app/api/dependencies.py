@@ -23,8 +23,8 @@ def verify_internal_token(
         return
 
     if x_internal_token is None or not hmac.compare_digest(
-        x_internal_token,
-        configured_token,
+        x_internal_token.encode("utf-8"),
+        configured_token.encode("utf-8"),
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

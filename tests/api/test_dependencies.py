@@ -26,6 +26,18 @@ class InternalTokenDependencyTest(unittest.TestCase):
                     self.assertEqual(raised.exception.status_code, 401)
                     self.assertEqual(raised.exception.detail, "Unauthorized")
 
+    def test_non_ascii_tokens_are_compared_without_type_error(self):
+        with patch(
+            "app.api.dependencies.settings.ANALYSIS_CALLBACK_INTERNAL_TOKEN",
+            "공유-비밀",
+        ):
+            self.assertIsNone(verify_internal_token("공유-비밀"))
+
+            with self.assertRaises(HTTPException) as raised:
+                verify_internal_token("다른-비밀")
+
+        self.assertEqual(raised.exception.status_code, 401)
+
     def test_empty_configuration_skips_authentication_with_warning(self):
         with patch(
             "app.api.dependencies.settings.ANALYSIS_CALLBACK_INTERNAL_TOKEN",

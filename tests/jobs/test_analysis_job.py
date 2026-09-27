@@ -2,7 +2,11 @@ import unittest
 from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
-from app.jobs.analysis_job import AllAnalyzersFailedError, run_analysis_job
+from app.jobs.analysis_job import (
+    AllAnalyzersFailedError,
+    get_analyzer_runners,
+    run_analysis_job,
+)
 from app.schemas.finding import FindingTool
 from app.services.scanner.base import AnalyzerError
 
@@ -52,6 +56,32 @@ class AnalysisJobTest(unittest.TestCase):
         failure_payload = callback.send_failure.call_args.args[0]
         self.assertIn("SEMGREP", failure_payload.error_message)
         self.assertIn("CODEQL", failure_payload.error_message)
+
+    def test_stub_infra_runner_is_not_registered(self):
+        registered_tools = [runner.tool for runner in get_analyzer_runners()]
+
+        self.assertEqual(
+            registered_tools,
+            [FindingTool.SEMGREP, FindingTool.CODEQL],
+        )
+
+    def test_missing_analysis_id_skips_failure_callback(self):
+        callback = Mock()
+
+        with patch(
+            "app.jobs.analysis_job.SpringCallbackClient",
+            return_value=callback,
+        ), patch(
+            "app.jobs.analysis_job.cleanup_repository"
+        ), self.assertLogs(
+            "app.jobs.analysis_job",
+            level="ERROR",
+        ) as logs:
+            with self.assertRaises(Exception):
+                run_analysis_job({})
+
+        callback.send_failure.assert_not_called()
+        self.assertIn("analysis_id is missing", logs.output[0])
 
     def pipeline_patches(self, runners):
         stack = ExitStack()

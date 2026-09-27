@@ -20,7 +20,6 @@ from app.services.normalizer.finding_normalizer import normalize_findings
 from app.services.rag.hybrid_search import search_evidence_for_finding
 from app.services.scanner.base import AnalyzerContext, AnalyzerRunner, RawFinding
 from app.services.scanner.codeql_runner import CodeQLRunner
-from app.services.scanner.infra_runner import InfraRunner
 from app.services.scanner.semgrep_runner import SemgrepRunner
 
 logger = logging.getLogger(__name__)
@@ -90,13 +89,18 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         }
     except Exception as exc:
         failure_payload = build_failure_callback_payload(context, payload, exc)
-        try:
-            callback_client.send_failure(failure_payload)
-        except SpringCallbackError:
+        if failure_payload.analysis_id is None:
             logger.exception(
-                "Failed to send Spring failure callback. analysis_id=%s",
-                failure_payload.analysis_id,
+                "Skipping Spring failure callback because analysis_id is missing"
             )
+        else:
+            try:
+                callback_client.send_failure(failure_payload)
+            except SpringCallbackError:
+                logger.exception(
+                    "Failed to send Spring failure callback. analysis_id=%s",
+                    failure_payload.analysis_id,
+                )
         raise
     finally:
         try:
@@ -190,7 +194,6 @@ def get_analyzer_runners() -> list[AnalyzerRunner]:
     return [
         SemgrepRunner(),
         CodeQLRunner(),
-        InfraRunner(),
     ]
 
 
