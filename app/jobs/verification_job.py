@@ -18,6 +18,7 @@ def run_verification_job(payload: dict, verification_id: str) -> dict:
     logger.info("Verification started. verification_id=%s", verification_id)
     try:
         request = VerificationRequest.model_validate(payload)
+        # 입력 검사 → LLM 판정 → 결과 무결성 검사
         result = verify_answer(request)
     except Exception:
         logger.warning(

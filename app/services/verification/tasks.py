@@ -37,6 +37,7 @@ def enqueue_verification(request: VerificationRequest) -> VerificationAccepted:
     validate_verification_request(request)
     settings = get_verification_settings()
     verification_id = uuid4()
+    # 검증 전용 큐 조회 및 비동기 작업 등록
     get_verification_queue().enqueue_call(
         func=run_verification_job,
         args=(request.model_dump(by_alias=True, mode="json"), str(verification_id)),
@@ -74,12 +75,13 @@ def get_verification(verification_id: UUID) -> VerificationResponse:
             verification_id=verification_id, status=VerificationStatus.COMPLETED, result=result,
         )
     if status == "started":
+        # 실행 제한과 Worker 종료 유예 시간 초과 여부
         if exceeded_execution_deadline(job):
             return failed_response(verification_id, "JOB_TIMEOUT", "Verification execution deadline exceeded")
         return VerificationResponse(verification_id=verification_id, status=VerificationStatus.RUNNING)
     if status in {"queued", "deferred", "scheduled"}:
         return VerificationResponse(verification_id=verification_id, status=VerificationStatus.QUEUED)
-    # Failed, stopped, canceled or unknown RQ states must never look completed.
+    # 실패·중단·취소·미지원 상태를 공통 실패 응답으로 변환
     return failed_response(verification_id, "VERIFICATION_FAILED", "Verification job did not complete")
 
 

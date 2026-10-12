@@ -59,9 +59,11 @@ def verify_answer(
     client: VerificationClient | None = None,
 ) -> VerificationResult:
     started_at = monotonic()
+    # 입력 크기·근거 ID·코드 라인 범위 검사
     validate_verification_request(request)
 
     if request.evidence:
+        # 주장 분해 및 근거 기반 LLM 판정
         generated = (client or ClaudeVerificationClient()).verify(request)
     else:
         # Without evidence, no model call can establish support or contradiction.
@@ -78,6 +80,7 @@ def verify_answer(
             usage=VerificationUsage(),
         )
 
+    # 답변 전체 커버리지·근거 ID·인용문 일치 검사
     validate_judgment(request, generated.judgment)
     return VerificationResult(
         results=generated.judgment.results,

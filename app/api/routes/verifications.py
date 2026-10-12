@@ -35,6 +35,7 @@ router = APIRouter(
 def create_verification(request: VerificationRequest) -> VerificationAccepted:
     # Sync endpoints run blocking Redis calls in FastAPI's thread pool.
     try:
+        # 입력 검사 및 검증 작업 등록, 조회용 ID 반환
         return enqueue_verification(request)
     except VerificationInputError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
@@ -45,6 +46,7 @@ def create_verification(request: VerificationRequest) -> VerificationAccepted:
 @router.get("/{verification_id}", response_model=VerificationResponse, response_model_exclude_none=True)
 def read_verification(verification_id: UUID) -> VerificationResponse:
     try:
+        # RQ 상태·저장 결과 조회 및 API 응답 변환
         return get_verification(verification_id)
     except VerificationNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Verification not found or expired") from None
