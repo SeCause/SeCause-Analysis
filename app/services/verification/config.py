@@ -12,6 +12,10 @@ class VerificationSettings(BaseSettings):
     CLAUDE_API_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
     ANALYSIS_CALLBACK_INTERNAL_TOKEN: str | None = None
+    VERIFICATION_JOB_TIMEOUT_SECONDS: int = Field(default=360, ge=30, le=900)
+    VERIFICATION_QUEUE_TTL_SECONDS: int = Field(default=600, ge=1, le=86400)
+    VERIFICATION_RESULT_TTL_SECONDS: int = Field(default=3600, ge=1, le=86400)
+    VERIFICATION_FAILURE_TTL_SECONDS: int = Field(default=3600, ge=1, le=86400)
     VERIFICATION_MODEL: str = "claude-sonnet-4-6"
     VERIFICATION_LLM_TIMEOUT_SECONDS: float = Field(default=45, gt=0, le=90)
     VERIFICATION_LLM_MAX_RETRIES: int = Field(default=1, ge=0, le=2)
