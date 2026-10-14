@@ -1,7 +1,12 @@
 from collections.abc import Iterable
+import logging
+from pathlib import Path
 
 from app.schemas.finding import Finding, FindingSeverity, FindingTool
 from app.services.scanner.base import RawFinding
+from app.services.normalizer.repository_path import InvalidFindingPath, repository_relative_path
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_FINDING_TYPE_SUFFIX = "FINDING"
 DEFAULT_MESSAGE = "Security finding detected"
@@ -12,8 +17,27 @@ class UnknownFindingToolError(ValueError):
 
 
 # 여러 analyzer raw finding을 공통 Finding 목록으로 변환
-def normalize_findings(raw_findings: Iterable[RawFinding]) -> list[Finding]:
-    return [normalize_finding(raw_finding) for raw_finding in raw_findings]
+def normalize_findings(
+    raw_findings: Iterable[RawFinding], repo_root: str | Path | None = None,
+) -> list[Finding]:
+    findings = []
+    for raw_finding in raw_findings:
+        if repo_root is not None:
+            try:
+                path = repository_relative_path(raw_finding.file_path, repo_root)
+            except InvalidFindingPath as exc:
+                logger.warning(
+                    "Skipping finding with invalid repository path. tool=%s rule_id=%s path=%r reason=%s",
+                    raw_finding.tool, raw_finding.rule_id, raw_finding.file_path, exc,
+                )
+                continue
+            raw_finding = raw_finding.model_copy(update={"file_path": path})
+        finding = normalize_finding(raw_finding)
+        if repo_root is not None:
+            # Keep filename whitespace; generic text normalization must not alter paths.
+            finding.file_path = path
+        findings.append(finding)
+    return findings
 
 
 # raw finding의 tool에 맞는 normalizer를 선택해 공통 Finding으로 변환
