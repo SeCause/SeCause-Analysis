@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # Spring Callback
     SPRING_CALLBACK_BASE_URL: str = "http://localhost:8080"
     SPRING_SUCCESS_CALLBACK_PATH: str = "/api/internal/analyses/{analysisId}/result"
+    SPRING_PROGRESS_CALLBACK_PATH: str = "/api/internal/analyses/{analysisId}/progress"
     SPRING_FAILURE_CALLBACK_PATH: str = "/api/internal/analyses/{analysisId}/failure"
     SPRING_CALLBACK_TIMEOUT_SECONDS: float = 10.0
     SPRING_CALLBACK_MAX_RETRIES: int = 2

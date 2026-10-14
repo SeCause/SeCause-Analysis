@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from app.collector.git_collector import cleanup_repository, shallow_clone_repository
 from app.jobs.secret_store import (
@@ -25,6 +25,47 @@ from app.services.scanner.semgrep_runner import SemgrepRunner
 logger = logging.getLogger(__name__)
 MAX_SCANNER_ERROR_SUMMARY_CHARS = 500
 
+# 단계 기반 처리율이며 소요 시간의 비율/남은 시간 예측이 아니다.
+# clone 10, scanner 40, 정규화/중복 제거 5, RAG 10, LLM 30.
+# 마지막 5는 BE의 결과 저장에 예약한다. 성공은 BE가 100, 실패는 현재 값을 유지한다.
+CLONE_PROGRESS = 10
+SCANNER_WEIGHT = 40
+NORMALIZE_PROGRESS = 55
+RAG_WEIGHT = 10
+RAG_PROGRESS = NORMALIZE_PROGRESS + RAG_WEIGHT
+LLM_WEIGHT = 30
+LLM_PROGRESS = RAG_PROGRESS + LLM_WEIGHT
+
+
+class AnalysisProgressReporter:
+    def __init__(self, client: SpringCallbackClient, analysis_id: int) -> None:
+        self.client = client
+        self.analysis_id = analysis_id
+        self.last_progress = 0
+
+    def report(self, progress: int, stage: str = "pipeline") -> None:
+        # 같은 정수 진행률은 다시 전송하지 않아 finding 수가 커져도 호출 수를 제한한다.
+        if not 0 <= progress < 100:
+            raise ValueError("Intermediate progress must be between 0 and 99")
+        if progress <= self.last_progress:
+            return
+        self.last_progress = progress
+        try:
+            self.client.send_progress(self.analysis_id, progress)
+        except SpringCallbackError:
+            logger.warning(
+                "Spring progress callback failed; continuing analysis. analysis_id=%s stage=%s progress_percent=%s result=failed",
+                self.analysis_id,
+                stage,
+                progress,
+            )
+
+        else:
+            logger.info(
+                "Spring progress callback completed. analysis_id=%s stage=%s progress_percent=%s result=sent",
+                self.analysis_id, stage, progress,
+            )
+
 
 class AllAnalyzersFailedError(RuntimeError):
     pass
@@ -36,6 +77,7 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         context = create_pipeline_context(payload)
+        progress = AnalysisProgressReporter(callback_client, context.analysis_id)
         #토큰이 유효한지 검사
         github_token = resolve_github_token_reference(context.github_token_reference)
 
@@ -58,15 +100,22 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
         #추후 runner 내부 조정 필요
-        raw_findings = run_analyzers(context)
+        progress.report(CLONE_PROGRESS, "clone")
+        raw_findings = run_analyzers(context, lambda value: progress.report(value, "scanner"))
         context.raw_findings = [finding.model_dump() for finding in raw_findings] #원본
         context.normalized_findings = normalize_findings(raw_findings) #정규화 후
         context.normalized_findings = deduplicate_findings(context.normalized_findings) #중복
 
+        progress.report(NORMALIZE_PROGRESS, "normalize_deduplicate")
         evidence_by_finding = search_evidence_for_findings(
             context.normalized_findings,
             analysis_id=context.analysis_id,
+            on_progress=lambda done, total: progress.report(
+                NORMALIZE_PROGRESS + RAG_WEIGHT * done // total, "rag"
+            ),
         )
+
+        progress.report(RAG_PROGRESS, "rag")
 
         #LLM 설명 추가
         context.enriched_findings = []
@@ -88,6 +137,7 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
                 evidence_documents,
             )
             context.enriched_findings.append(enriched_finding)
+            progress.report(RAG_PROGRESS + LLM_WEIGHT * finding_index // finding_total, "llm")
             logger.info(
                 "Finding enrichment completed. analysis_id=%s finding_index=%s finding_total=%s",
                 context.analysis_id,
@@ -96,6 +146,7 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
             )
 
         success_payload = build_success_callback_payload(context)
+        progress.report(LLM_PROGRESS, "llm")
         callback_client.send_success(success_payload)
 
         logger.info(
@@ -166,13 +217,17 @@ def cleanup_github_token_reference(
 
 
 # 등록된 analyzer runner stub을 순서대로 실행해 raw finding을 수집
-def run_analyzers(context: AnalysisJobContext) -> list[RawFinding]:
+def run_analyzers(
+    context: AnalysisJobContext,
+    report_progress: Callable[[int], None] | None = None,
+) -> list[RawFinding]:
     analyzer_context = AnalyzerContext.from_pipeline_context(context)
     repo_path = context.repo_path or "repo-not-cloned"
     raw_findings: list[RawFinding] = []
     successful_scanner_count = 0
 
-    for runner in get_analyzer_runners():
+    runners = get_analyzer_runners()
+    for runner_index, runner in enumerate(runners, start=1):
         logger.info(
             "Analysis stage started. stage=%s analysis_id=%s",
             runner.tool.value,
@@ -191,6 +246,9 @@ def run_analyzers(context: AnalysisJobContext) -> list[RawFinding]:
                 exc.__class__.__name__,
             )
             continue
+        finally:
+            if report_progress is not None:
+                report_progress(CLONE_PROGRESS + SCANNER_WEIGHT * runner_index // len(runners))
         logger.info(
             "Analysis stage completed. stage=%s analysis_id=%s",
             runner.tool.value,

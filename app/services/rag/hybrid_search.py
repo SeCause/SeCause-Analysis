@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from typing import Callable
 
 from app.schemas.base import CamelModel
 from app.schemas.finding import Finding
@@ -38,9 +39,10 @@ def search_evidence_for_finding(finding: Finding) -> list[EvidenceDocument]:
 def search_evidence_for_findings(
     findings: list[Finding],
     analysis_id: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> list[list[EvidenceDocument]]:
     queries = [build_rag_query(finding) for finding in findings]
-    return asyncio.run(search_evidence_batch_async(queries, analysis_id))
+    return asyncio.run(search_evidence_batch_async(queries, analysis_id, on_progress))
 
 
 # 동기 분석 job에서 호출하기 위한 검색 진입점
@@ -52,6 +54,7 @@ def search_evidence(query: RagQuery) -> list[EvidenceDocument]:
 async def search_evidence_batch_async(
     queries: list[RagQuery],
     analysis_id: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> list[list[EvidenceDocument]]:
     results: list[list[EvidenceDocument]] = []
     finding_total = len(queries)
@@ -67,6 +70,9 @@ async def search_evidence_batch_async(
         )
         evidence_documents = await search_evidence_safely_async(query)
         results.append(evidence_documents)
+        if on_progress is not None:
+            # 동기 callback HTTP와 재시도 대기를 DB 조회의 이벤트 루프 밖에서 실행한다.
+            await asyncio.to_thread(on_progress, finding_index, finding_total)
         logger.info(
             "Finding RAG search completed. analysis_id=%s finding_index=%s finding_total=%s evidence_count=%s",
             analysis_id,
