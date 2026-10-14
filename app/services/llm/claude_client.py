@@ -176,7 +176,8 @@ EXPLANATION_TOOL_SCHEMA = {
             },
             "fixExamples": {
                 "type": "array",
-                "minItems": 1,
+                "minItems": 0,
+                "description": "대상 언어의 코드/설정만 포함. 생성 불가 시 빈 배열; 수정 안내는 recommendation에 유지.",
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -187,11 +188,12 @@ EXPLANATION_TOOL_SCHEMA = {
                         },
                         "vulnerableCode": {
                             "type": ["string", "null"],
-                            "description": "취약한 코드 예시 또는 null",
+                            "description": "대상 파일 언어의 코드/설정만, 설명 및 Markdown fence 금지. 없으면 null.",
                         },
                         "fixedCode": {
                             "type": "string",
-                            "description": "안전한 코드 예시",
+                            "minLength": 1,
+                            "description": "대상 파일 언어의 안전한 코드/설정만. 일반 설명 및 Markdown fence 금지.",
                         },
                         "explanation": {
                             "type": "string",
