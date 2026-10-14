@@ -1,13 +1,17 @@
 import unittest
+
+import httpx
 from contextlib import ExitStack
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from app.jobs.analysis_job import (
     AllAnalyzersFailedError,
+    AnalysisProgressReporter,
     get_analyzer_runners,
     run_analysis_job,
 )
 from app.schemas.finding import FindingSeverity, FindingTool
+from app.services.callback.spring_client import SpringCallbackError
 from app.services.scanner.base import AnalyzerError, RawFinding
 
 
@@ -53,9 +57,93 @@ class AnalysisJobTest(unittest.TestCase):
 
         callback.send_success.assert_not_called()
         callback.send_failure.assert_called_once()
+        self.assertEqual([call.args[1] for call in callback.send_progress.call_args_list], [10, 30, 50])
         failure_payload = callback.send_failure.call_args.args[0]
         self.assertIn("SEMGREP", failure_payload.error_message)
         self.assertIn("CODEQL", failure_payload.error_message)
+
+    def test_progress_failure_does_not_fail_analysis(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = []
+        with self.pipeline_patches([runner]) as callback:
+            callback.send_progress.side_effect = SpringCallbackError("offline")
+            result = run_analysis_job(self.payload)
+        self.assertEqual(result["status"], "COMPLETED")
+        callback.send_success.assert_called_once()
+        callback.send_failure.assert_not_called()
+
+    def test_empty_findings_still_report_stages_before_result(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = []
+        with self.pipeline_patches([runner]) as callback:
+            run_analysis_job(self.payload)
+        values = [call.args[1] for call in callback.send_progress.call_args_list]
+        self.assertEqual(values, [10, 50, 55, 65, 95])
+        self.assertEqual(callback.method_calls[-1][0], "send_success")
+
+    def test_progress_reporter_skips_duplicates_and_regressions(self):
+        callback = Mock()
+        reporter = AnalysisProgressReporter(callback, 11)
+        for value in [10, 10, 5, 30]:
+            reporter.report(value)
+        self.assertEqual([call.args for call in callback.send_progress.call_args_list], [(11, 10), (11, 30)])
+
+    def test_http_progress_errors_preserve_success_and_failure_callbacks(self):
+        from tests.services.callback.test_spring_client import SpringCallbackClientTest
+
+        for failure in [httpx.ReadTimeout("timeout"), 401, 503]:
+            for all_failed in [False, True]:
+                with self.subTest(failure=failure, all_failed=all_failed):
+                    runner = Mock(tool=FindingTool.SEMGREP)
+                    if all_failed:
+                        runner.run.side_effect = AnalyzerError("scanner failed")
+                    else:
+                        runner.run.return_value = []
+                    client = SpringCallbackClientTest().make_client()
+                    with self.pipeline_patches([runner]) as callback, patch(
+                        "app.services.callback.spring_client.httpx.Client"
+                    ) as transport, patch("app.services.callback.spring_client.time.sleep"):
+                        post = transport.return_value.__enter__.return_value.post
+                        if isinstance(failure, Exception):
+                            post.side_effect = failure
+                        else:
+                            post.return_value = httpx.Response(
+                                failure, request=httpx.Request("POST", "https://example.test")
+                            )
+                        callback.send_progress.side_effect = client.send_progress
+                        if all_failed:
+                            with self.assertRaises(AllAnalyzersFailedError):
+                                run_analysis_job(self.payload)
+                            callback.send_failure.assert_called_once()
+                        else:
+                            self.assertEqual(run_analysis_job(self.payload)["status"], "COMPLETED")
+                            callback.send_success.assert_called_once()
+                        values = [call.args[1] for call in callback.send_progress.call_args_list]
+                        self.assertEqual(values, sorted(set(values)))
+                        self.assertTrue(all(0 <= value < 100 for value in values))
+
+    def test_rag_and_llm_progress_use_deduplicated_finding_count(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = [
+            build_raw_finding("FIRST", 10), build_raw_finding("FIRST", 10),
+            build_raw_finding("SECOND", 20),
+        ]
+        with self.pipeline_patches([runner]) as callback, patch(
+            "app.services.rag.hybrid_search.search_evidence_async",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as search, patch(
+            "app.jobs.analysis_job.enrich_finding_with_explanation",
+            side_effect=lambda finding, evidence: finding,
+        ):
+            result = run_analysis_job(self.payload)
+        self.assertEqual(result["finding_count"], 2)
+        self.assertEqual(search.await_count, 2)
+        self.assertEqual(
+            [call.args[1] for call in callback.send_progress.call_args_list],
+            [10, 50, 55, 60, 65, 80, 95],
+        )
+        self.assertEqual(callback.method_calls[-1][0], "send_success")
 
     def test_stub_infra_runner_is_not_registered(self):
         registered_tools = [runner.tool for runner in get_analyzer_runners()]
@@ -72,7 +160,7 @@ class AnalysisJobTest(unittest.TestCase):
             build_raw_finding("SECOND", 20),
         ]
 
-        with self.pipeline_patches([runner]), patch(
+        with self.pipeline_patches([runner]) as callback, patch(
             "app.jobs.analysis_job.search_evidence_for_findings",
             return_value=[[], []],
         ), patch(
@@ -85,6 +173,10 @@ class AnalysisJobTest(unittest.TestCase):
             result = run_analysis_job(self.payload)
 
         self.assertEqual(result["finding_count"], 2)
+        self.assertEqual(
+            [call.args[1] for call in callback.send_progress.call_args_list],
+            [10, 50, 55, 65, 80, 95],
+        )
         output = "\n".join(logs.output)
         self.assertIn("finding_index=1 finding_total=2", output)
         self.assertIn("finding_index=2 finding_total=2", output)
