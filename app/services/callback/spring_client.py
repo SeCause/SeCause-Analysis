@@ -26,6 +26,10 @@ class CallbackPayload(CamelModel):
     )
 
 
+class AnalysisProgressCallbackPayload(CallbackPayload):
+    progress_percent: int = Field(ge=0, le=100, strict=True)
+
+
 class AnalysisSummary(CallbackPayload):
     total_count: int = 0
 
@@ -58,10 +62,17 @@ class SpringCallbackClient:
 
         self.base_url = settings.SPRING_CALLBACK_BASE_URL.rstrip("/") + "/"
         self.success_path = settings.SPRING_SUCCESS_CALLBACK_PATH.lstrip("/")
+        self.progress_path = settings.SPRING_PROGRESS_CALLBACK_PATH.lstrip("/")
         self.failure_path = settings.SPRING_FAILURE_CALLBACK_PATH.lstrip("/")
         self.timeout_seconds = settings.SPRING_CALLBACK_TIMEOUT_SECONDS
         self.max_retries = settings.SPRING_CALLBACK_MAX_RETRIES
         self.internal_token = settings.ANALYSIS_CALLBACK_INTERNAL_TOKEN
+
+    def send_progress(self, analysis_id: int, progress_percent: int) -> None:
+        self._post_callback(
+            _format_callback_path(self.progress_path, analysis_id),
+            AnalysisProgressCallbackPayload(progress_percent=progress_percent),
+        )
 
     # 분석 성공 payload를 Spring callback API로 전송
     def send_success(self, payload: AnalysisSuccessCallbackPayload) -> None:
