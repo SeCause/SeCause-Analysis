@@ -14,6 +14,21 @@ from app.services.scanner.codeql_sarif_parser import (
 
 
 class CodeQLSarifParserTest(unittest.TestCase):
+    def test_invalid_uri_does_not_discard_other_results_and_base_is_applied(self):
+        import copy
+        payload = build_sarif_payload()
+        run = payload["runs"][0]
+        valid = run["results"][0]
+        artifact = valid["locations"][0]["physicalLocation"]["artifactLocation"]
+        artifact.update(uri="src/a%20b.py", uriBaseId="ROOT")
+        run["originalUriBaseIds"] = {"ROOT": {"uri": "file:///tmp/repository/"}}
+        invalid = copy.deepcopy(valid)
+        invalid["locations"][0]["physicalLocation"]["artifactLocation"]["uriBaseId"] = "UNKNOWN"
+        run["results"] = [invalid, valid]
+        with self.assertLogs("app.services.scanner.codeql_sarif_parser", level="WARNING"):
+            findings = self.parse_payload(payload)
+        self.assertEqual([finding.file_path for finding in findings], ["/tmp/repository/src/a b.py"])
+
     def test_parse_sarif_file_maps_result_to_raw_finding(self):
         language = CodeQLLanguage(
             name="python",

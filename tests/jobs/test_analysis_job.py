@@ -16,6 +16,24 @@ from app.services.scanner.base import AnalyzerError, RawFinding
 
 
 class AnalysisJobTest(unittest.TestCase):
+    def test_callback_contains_relative_deduplicated_paths_only(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        relative = build_raw_finding("FIRST", 10)
+        absolute = relative.model_copy(update={"file_path": "/tmp/repository/src/example.py"})
+        invalid = relative.model_copy(update={"file_path": "/tmp/outside.py"})
+        runner.run.return_value = [absolute, relative, invalid]
+        with self.pipeline_patches([runner]) as callback, patch(
+            "app.jobs.analysis_job.search_evidence_for_findings", return_value=[[]],
+        ) as search, patch(
+            "app.jobs.analysis_job.enrich_finding_with_explanation", side_effect=lambda finding, _: finding,
+        ), self.assertLogs("app.services.normalizer.finding_normalizer", level="WARNING"):
+            result = run_analysis_job(self.payload)
+        self.assertEqual(result["finding_count"], 1)
+        self.assertEqual(len(search.call_args.args[0]), 1)
+        payload = callback.send_success.call_args.args[0].model_dump(by_alias=True)
+        self.assertEqual(payload["findings"][0]["filePath"], "src/example.py")
+        self.assertNotIn("/tmp/repository", str(payload))
+
     def setUp(self):
         self.payload = {
             "analysis_id": 11,

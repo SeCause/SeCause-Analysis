@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.schemas.finding import FindingSeverity, FindingTool
 from app.services.scanner.base import AnalyzerError, RawFinding
+from app.services.normalizer.repository_path import InvalidFindingPath, sarif_artifact_path
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.services.scanner.codeql_runner import CodeQLLanguage
@@ -45,10 +49,16 @@ def parse_sarif_file(
         if not isinstance(results, list):
             raise AnalyzerError("Invalid CodeQL SARIF output: results must be a list")
 
-        findings.extend(
-            convert_sarif_result(result, rules, language)
-            for result in results
-        )
+        for result_index, result in enumerate(results):
+            try:
+                findings.append(convert_sarif_result(
+                    result, rules, language, run.get("originalUriBaseIds", {}),
+                ))
+            except InvalidFindingPath as exc:
+                logger.warning(
+                    "Skipping CodeQL finding with invalid artifact URI. result_index=%s rule_id=%s reason=%s",
+                    result_index, result.get("ruleId"), exc,
+                )
 
     return findings
 
@@ -79,6 +89,7 @@ def convert_sarif_result(
     result: dict[str, Any],
     rules: dict[str, dict[str, Any]],
     language: CodeQLLanguage,
+    uri_bases: dict[str, Any] | None = None,
 ) -> RawFinding:
     if not isinstance(result, dict):
         raise AnalyzerError("Invalid CodeQL SARIF output: result must be an object")
@@ -94,7 +105,7 @@ def convert_sarif_result(
         tool=FindingTool.CODEQL,
         type=normalize_rule_type(rule_id),
         severity=map_codeql_severity(properties, rule_properties, result.get("level")),
-        file_path=get_artifact_uri(location),
+        file_path=get_artifact_uri(location, uri_bases),
         message=get_sarif_message(result, rule_id),
         rule_id=rule_id,
         cwe_id=extract_cwe_id(result, rule),
@@ -125,12 +136,12 @@ def get_primary_location(result: dict[str, Any]) -> dict[str, Any]:
 
 
 # SARIF artifact uri를 추출
-def get_artifact_uri(location: dict[str, Any]) -> str:
+def get_artifact_uri(location: dict[str, Any], uri_bases: dict | None = None) -> str:
     artifact_location = location.get("artifactLocation", {})
     if not isinstance(artifact_location, dict):
-        return ""
+        raise InvalidFindingPath("invalid artifact location")
 
-    return str(artifact_location.get("uri") or "")
+    return sarif_artifact_path(artifact_location, uri_bases if isinstance(uri_bases, dict) else {})
 
 
 # SARIF message 텍스트를 추출
