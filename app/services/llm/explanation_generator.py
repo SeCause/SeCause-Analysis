@@ -4,6 +4,9 @@ from app.schemas.finding import Finding
 from app.schemas.explanation import ExplanationResult, FixExample, ReferenceDocument
 from app.services.llm.claude_client import ClaudeClientError, ClaudeExplanationClient
 from app.services.llm.prompt_builder import build_explanation_prompt
+from app.services.llm.fix_code_validator import (
+    canonical_language, normalize_code, target_language,
+)
 from app.services.rag.hybrid_search import EvidenceDocument
 
 logger = logging.getLogger(__name__)
@@ -53,43 +56,35 @@ def generate_explanation(
     )
 
 
-# LLM이 수정 예시를 비워 둔 경우 최소 수정 예시 보정
+# 대상 언어의 코드로 확인되는 예시만 callback에 전달; 코드를 만들어 보정하지 않음
 def ensure_fix_examples(
     finding: Finding,
     fix_examples: list[FixExample],
 ) -> list[FixExample]:
-    if fix_examples:
-        return fix_examples
-
-    if "SQL_INJECTION" in finding.type or finding.cwe_id == "CWE-89":
-        return [
-            FixExample(
-                language="Java" if finding.file_path.endswith(".java") else None,
-                vulnerable_code=finding.evidence,
-                fixed_code=(
-                    'String sql = "SELECT * FROM users WHERE id = ?";\n'
-                    "PreparedStatement statement = connection.prepareStatement(sql);\n"
-                    "statement.setString(1, userId);\n"
-                    "ResultSet resultSet = statement.executeQuery();"
-                ),
-                explanation=(
-                    "PreparedStatement를 사용하면 SQL 구조와 사용자 입력값이 분리되어 "
-                    "입력값이 SQL 명령으로 해석되는 것을 방지할 수 있습니다."
-                ),
-            )
-        ]
-
-    return [
-        FixExample(
-            language=None,
-            vulnerable_code=finding.evidence,
-            fixed_code="취약한 API 사용을 안전한 API 또는 검증된 보안 패턴으로 교체해야 합니다.",
-            explanation=(
-                "탐지된 취약점 유형과 참조 문서를 기준으로 입력 검증, 출력 인코딩, "
-                "권한 제한, 안전한 라이브러리 사용 등 적절한 보안 조치를 적용해야 합니다."
-            ),
+    language = target_language(finding.file_path)
+    accepted = []
+    for example in fix_examples:
+        declared = canonical_language(example.language)
+        compatible = declared is None or declared == language or (
+            language == "tsx" and declared == "typescript"
         )
-    ]
+        code = normalize_code(example.fixed_code, language) if language and compatible else None
+        if code is None:
+            logger.warning(
+                "Omitting invalid fix example. file_path=%s target_language=%s declared_language=%s",
+                finding.file_path, language, declared,
+            )
+            continue
+        vulnerable_code = (
+            normalize_code(example.vulnerable_code, language)
+            if example.vulnerable_code else None
+        )
+        accepted.append(example.model_copy(update={
+            "language": language,
+            "fixed_code": code,
+            "vulnerable_code": vulnerable_code,
+        }))
+    return accepted
 
 
 # Claude 호출 실패 시 분석 전체 중단 방지 기본 설명 생성
@@ -116,7 +111,7 @@ def build_fallback_explanation(
             "탐지된 코드 위치를 확인하고 관련 CWE/OWASP 보안 가이드에 따라 "
             "검증, 이스케이프, 권한 제한, 안전한 API 사용 등 적절한 보안 조치를 적용해야 합니다."
         ),
-        fix_examples=ensure_fix_examples(finding, []),
+        fix_examples=[],
         references=references,
         reference_documents=[
             ReferenceDocument(title=document.title, url=document.url)

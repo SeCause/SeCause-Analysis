@@ -1,4 +1,5 @@
 from app.schemas.finding import Finding
+from app.services.llm.fix_code_validator import target_language
 from app.services.rag.hybrid_search import EvidenceDocument
 
 
@@ -19,10 +20,15 @@ def build_explanation_prompt(
     return (
         "You are a security analysis assistant.\n"
         "Analyze the finding using the provided evidence documents.\n"
-        "Write all user-facing explanation values in Korean.\n"
         "Keep JSON keys in English camelCase exactly as specified.\n"
         "Keep code, file paths, identifiers, CWE IDs, and security terms unchanged when translation may reduce clarity.\n"
-        "Include at least one fixExamples item whenever the vulnerable pattern can be inferred.\n"
+        "Write summary, rootCause, impact, recommendation, and fixExamples.explanation in Korean.\n"
+        "vulnerableCode and fixedCode must contain only source code or configuration in the target file language.\n"
+        "Do not translate code, comments, or string literals merely to satisfy the Korean explanation instruction.\n"
+        "Do not include Markdown fences or prose in code values. Use language matching the target file.\n"
+        "Never substitute an example from another language, including Java SQL injection examples.\n"
+        "If a concrete fix cannot be generated confidently from the available context, return fixExamples: [].\n"
+        "Keep actionable remediation guidance in recommendation even when fixExamples is empty.\n"
         "Return only valid JSON matching this schema:\n"
         "{\n"
         '  "summary": "취약점 요약 한 문장",\n'
@@ -33,7 +39,7 @@ def build_explanation_prompt(
         "    {\n"
         '      "language": "언어 이름 또는 null",\n'
         '      "vulnerableCode": "취약한 코드 예시 또는 null",\n'
-        '      "fixedCode": "안전한 코드 예시",\n'
+        '      "fixedCode": "대상 언어의 코드/설정만",\n'
         '      "explanation": "수정 코드가 안전한 이유"\n'
         "    }\n"
         "  ]\n"
@@ -44,6 +50,7 @@ def build_explanation_prompt(
         f"Severity: {finding.severity}\n"
         f"Tool: {finding.tool}\n"
         f"Location: {format_finding_location(finding)}\n"
+        f"Target language: {target_language(finding.file_path) or 'unknown (omit fixExamples)'}\n"
         f"Message: {finding.message}\n"
         f"Code evidence: {finding.evidence or 'N/A'}\n\n"
         "[Reference Evidence]\n"

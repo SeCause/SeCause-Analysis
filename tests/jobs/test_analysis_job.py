@@ -90,6 +90,26 @@ class AnalysisJobTest(unittest.TestCase):
         self.assertIn("finding_index=2 finding_total=2", output)
         self.assertIn("Finding enrichment completed", output)
 
+    def test_llm_failure_keeps_finding_and_sends_success_without_fix_code(self):
+        from app.services.llm.claude_client import ClaudeClientError
+
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = [build_raw_finding("SQL_INJECTION", 10)]
+        with self.pipeline_patches([runner]) as callback, patch(
+            "app.jobs.analysis_job.search_evidence_for_findings", return_value=[[]]
+        ), patch(
+            "app.services.llm.explanation_generator.ClaudeExplanationClient",
+            side_effect=ClaudeClientError("mock LLM failure"),
+        ):
+            result = run_analysis_job(self.payload)
+
+        self.assertEqual(result["status"], "COMPLETED")
+        callback.send_failure.assert_not_called()
+        body = callback.send_success.call_args.args[0].model_dump(by_alias=True)
+        self.assertEqual(body["summary"]["totalCount"], 1)
+        self.assertEqual(body["findings"][0]["fixExamples"], [])
+        self.assertTrue(body["findings"][0]["recommendation"])
+
     def test_missing_analysis_id_skips_failure_callback(self):
         callback = Mock()
 
