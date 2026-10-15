@@ -1,6 +1,7 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+import threading
+from unittest.mock import AsyncMock, Mock, patch
 
 from app.schemas.finding import Finding, FindingSeverity, FindingTool
 from app.services.rag.hybrid_search import search_evidence_for_findings
@@ -43,12 +44,22 @@ class HybridSearchTest(unittest.TestCase):
             "app.services.rag.hybrid_search.OpenAIEmbedder",
         ) as embedder:
             embedder.return_value.embed_query.return_value = [0.0]
-            results = search_evidence_for_findings(findings, analysis_id=11)
+            callback_threads = []
+            def on_progress(done, total):
+                callback_threads.append((done, total, threading.get_ident()))
+            results = search_evidence_for_findings(findings, analysis_id=11, on_progress=on_progress)
 
         self.assertEqual(results, [[], []])
+        self.assertEqual([(done, total) for done, total, _ in callback_threads], [(1, 2), (2, 2)])
+        self.assertTrue(all(thread_id != threading.get_ident() for _, _, thread_id in callback_threads))
         self.assertEqual(session_factory.call_count, 2)
         self.assertEqual(len(database_loop_ids), 4)
         self.assertEqual(len(set(database_loop_ids)), 1)
+
+    def test_empty_batch_has_no_division_or_progress_callback(self):
+        callback = Mock()
+        self.assertEqual(search_evidence_for_findings([], on_progress=callback), [])
+        callback.assert_not_called()
 
     def test_finding_progress_is_logged(self):
         findings = [build_finding("FIRST"), build_finding("SECOND")]
