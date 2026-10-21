@@ -12,7 +12,8 @@ class InvalidFindingPath(ValueError):
 def repository_relative_path(value: str, repo_root: str | Path) -> str:
     if not value or "\x00" in value:
         raise InvalidFindingPath("missing or invalid file path")
-    value = value.replace("\\", "/")
+    # Scanner paths are native paths; SARIF URIs are decoded by sarif_artifact_path.
+    # On POSIX a backslash is part of the filename, not a directory separator.
     if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", value) or value.startswith("//"):
         raise InvalidFindingPath("unsupported URI, drive or network path")
     root = Path(repo_root).absolute()
