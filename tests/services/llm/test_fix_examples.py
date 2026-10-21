@@ -75,6 +75,40 @@ class FixExamplesTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(ensure_fix_examples(finding(path), [example(code)]), [])
 
+    def test_common_indentation_is_removed_before_trimming(self):
+        expected = 'def fix():\n    safe()\n    return True'
+        for code in [
+            '    def fix():\n        safe()\n        return True',
+            '\n    def fix():\n        safe()\n        return True\n',
+            '```python\n    def fix():\n        safe()\n        return True\n```',
+            '    ```python\n        def fix():\n            safe()\n            return True\n    ```',
+        ]:
+            with self.subTest(code=code):
+                result = ensure_fix_examples(finding(), [example(code)])
+                self.assertEqual(result[0].fixed_code, expected)
+
+    def test_python_docstrings_are_allowed_in_normal_code(self):
+        for code in [
+            'def fix():\n    """설명"""\n    safe()',
+            'async def fix():\n    """설명"""\n    await safe()',
+            'class Fix:\n    """설명"""\n    def apply(self):\n        """설명"""\n        safe()',
+            '"""모듈 설명"""\nsafe()',
+        ]:
+            with self.subTest(code=code):
+                self.assertEqual(ensure_fix_examples(finding(), [example(code)])[0].fixed_code, code)
+        for code in ['"""설명"""', 'safe()\n"""설명"""', 'def fix():\n    safe()\n    "설명"']:
+            self.assertEqual(ensure_fix_examples(finding(), [example(code)]), [])
+
+    def test_module_directives_require_real_code_and_prologue_position(self):
+        for path in ['x.js', 'x.ts', 'x.tsx']:
+            for directive in ['"use client"', "'use server'", '"use strict"']:
+                code = f'// 주석\n{directive};\nconst safe = true;'
+                with self.subTest(path=path, directive=directive):
+                    self.assertEqual(ensure_fix_examples(finding(path), [example(code)])[0].fixed_code, code)
+                    self.assertEqual(ensure_fix_examples(finding(path), [example(directive + ';')]), [])
+            for code in ['"설명";\nsafe();', 'safe();\n"use client";', 'function fix() { safe(); "설명"; }']:
+                self.assertEqual(ensure_fix_examples(finding(path), [example(code)]), [])
+
     def test_target_language_overrides_claim_and_unknown_language_is_omitted(self):
         java = 'PreparedStatement stmt = connection.prepareStatement(sql);'
         for path in ["x.py", "x.js", "x.ts", "x.yaml"]:
