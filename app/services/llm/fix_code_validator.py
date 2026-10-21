@@ -40,7 +40,7 @@ def canonical_language(language: str | None) -> str | None:
 
 
 def normalize_code(value: str, language: str) -> str | None:
-    code = value.strip()
+    code = dedent(value).strip()
     # Unwrap only a single complete fence. Prose around a fence is not extracted.
     if "```" in code:
         match = re.fullmatch(r"```([^\n`]*)\n(.*?)\n```", code, re.DOTALL)
@@ -49,7 +49,7 @@ def normalize_code(value: str, language: str) -> str | None:
         label = canonical_language(match[1])
         if label and label != language and not (language == "tsx" and label == "typescript"):
             return None
-        code = match[2].strip()
+        code = dedent(match[2]).strip()
     if not code:
         return None
     return code if is_code(code, language) else None
@@ -60,9 +60,19 @@ def is_code(code: str, language: str) -> bool:
         if language == "python":
             tree = ast.parse(dedent(code))
             body = tree.body
-            # Bare names/literals (including a prose word or docstring) are not fixes.
-            return bool(body) and all(
+            # Only the first string in a module/function/class body is a docstring.
+            docstrings = {
+                id(node.body[0])
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            }
+            return any(id(node) not in docstrings for node in body) and all(
                 not isinstance(node, ast.Expr)
+                or id(node) in docstrings
                 or isinstance(node.value, (ast.Call, ast.Await, ast.Yield, ast.YieldFrom))
                 for node in ast.walk(tree)
             )
@@ -71,7 +81,7 @@ def is_code(code: str, language: str) -> bool:
             return isinstance(value, (dict, list)) and bool(value)
         if language in {"java", "javascript", "typescript", "tsx"}:
             parser = _parser(language)
-            if _valid_tree(parser.parse(code.encode()).root_node):
+            if _valid_tree(parser.parse(code.encode()).root_node, language):
                 return True
             if language == "java":
                 # Java remediation often consists of method-body statements or members.
@@ -103,13 +113,30 @@ def _parser(language: str) -> Parser:
     return Parser(Language(grammar()))
 
 
-def _valid_tree(root) -> bool:
+def _valid_tree(root, language: str | None = None) -> bool:
     if root.has_error:
         return False
+    # Recognize a directive prologue, ignoring comments, without counting it as code.
+    directives = set()
+    if language in {"javascript", "typescript", "tsx"}:
+        for child in root.named_children:
+            if child.type == "comment":
+                continue
+            if (child.type == "expression_statement" and child.named_children
+                    and child.named_children[0].type == "string"
+                    and child.named_children[0].text in {
+                        b'"use client"', b"'use client'", b'"use server"', b"'use server'",
+                        b'"use strict"', b"'use strict'",
+                    }):
+                directives.add((child.start_byte, child.end_byte))
+            else:
+                break
     meaningful = False
     stack = [root]
     while stack:
         node = stack.pop()
+        if (node.start_byte, node.end_byte) in directives and node.type == "expression_statement":
+            continue
         if node.type in {"expression_statement"}:
             expressions = node.named_children
             if not expressions or expressions[0].type in {
