@@ -29,6 +29,20 @@ class CodeQLSarifParserTest(unittest.TestCase):
             findings = self.parse_payload(payload)
         self.assertEqual([finding.file_path for finding in findings], ["/tmp/repository/src/a b.py"])
 
+    def test_encoded_backslash_survives_parser_and_normalization(self):
+        from app.services.normalizer.finding_normalizer import normalize_findings
+
+        payload = build_sarif_payload()
+        artifact = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+        artifact["uri"] = "src/a%5Cb.py"
+        raw_findings = self.parse_payload(payload)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir()
+            (root / "src" / r"a\b.py").touch()
+            findings = normalize_findings(raw_findings, root)
+        self.assertEqual([item.file_path for item in findings], [r"src/a\b.py"])
+
     def test_parse_sarif_file_maps_result_to_raw_finding(self):
         language = CodeQLLanguage(
             name="python",
