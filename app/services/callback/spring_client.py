@@ -66,12 +66,16 @@ class SpringCallbackClient:
         self.failure_path = settings.SPRING_FAILURE_CALLBACK_PATH.lstrip("/")
         self.timeout_seconds = settings.SPRING_CALLBACK_TIMEOUT_SECONDS
         self.max_retries = settings.SPRING_CALLBACK_MAX_RETRIES
+        self.progress_timeout_seconds = settings.SPRING_PROGRESS_CALLBACK_TIMEOUT_SECONDS
+        self.progress_max_retries = settings.SPRING_PROGRESS_CALLBACK_MAX_RETRIES
         self.internal_token = settings.ANALYSIS_CALLBACK_INTERNAL_TOKEN
 
     def send_progress(self, analysis_id: int, progress_percent: int) -> None:
         self._post_callback(
             _format_callback_path(self.progress_path, analysis_id),
             AnalysisProgressCallbackPayload(progress_percent=progress_percent),
+            timeout_seconds=self.progress_timeout_seconds,
+            max_retries=self.progress_max_retries,
         )
 
     # 분석 성공 payload를 Spring callback API로 전송
@@ -102,15 +106,20 @@ class SpringCallbackClient:
         )
 
     # callback HTTP POST 수행
-    def _post_callback(self, path: str, payload: CallbackPayload) -> None:
+    def _post_callback(
+        self, path: str, payload: CallbackPayload, *,
+        timeout_seconds: float | None = None, max_retries: int | None = None,
+    ) -> None:
+        timeout_seconds = self.timeout_seconds if timeout_seconds is None else timeout_seconds
+        max_retries = self.max_retries if max_retries is None else max_retries
         url = urljoin(self.base_url, path)
         body = payload.model_dump(by_alias=True, mode="json")
         headers = _build_internal_token_headers(self.internal_token)
         last_error: Exception | None = None
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(max_retries + 1):
             try:
-                with httpx.Client(timeout=self.timeout_seconds) as client:
+                with httpx.Client(timeout=timeout_seconds) as client:
                     response = client.post(url, json=body, headers=headers)
                     response.raise_for_status()
 
@@ -122,7 +131,7 @@ class SpringCallbackClient:
                 return
             except Exception as exc:
                 last_error = exc
-                if not _is_retryable_callback_error(exc) or attempt >= self.max_retries:
+                if not _is_retryable_callback_error(exc) or attempt >= max_retries:
                     break
 
                 sleep_seconds = min(2 ** attempt, 8)
