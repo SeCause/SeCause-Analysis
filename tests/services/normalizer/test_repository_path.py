@@ -23,9 +23,51 @@ class RepositoryPathTest(unittest.TestCase):
 
     def test_paths_preserve_structure_and_names(self):
         for path in ["src/한글 file.py", str(self.root / "src/한글 file.py"),
-                     "./src/../src/한글 file.py", "src\\한글 file.py", "src//한글 file.py"]:
+                     "./src/../src/한글 file.py", "src//한글 file.py"]:
             with self.subTest(path=path):
                 self.assertEqual(repository_relative_path(path, self.root), "src/한글 file.py")
+
+    def test_backslash_filename_is_distinct_from_directory_separator(self):
+        name = r"src\한글 file.py"
+        (self.root / name).write_text("backslash filename", encoding="utf-8")
+        for value in [name, str(self.root / name)]:
+            with self.subTest(value=value):
+                relative = repository_relative_path(value, self.root)
+                self.assertEqual(relative, name)
+                self.assertEqual((self.root / relative).read_text(encoding="utf-8"), "backslash filename")
+        self.assertNotEqual(repository_relative_path(name, self.root),
+                            repository_relative_path("src/한글 file.py", self.root))
+
+    def test_backslash_filename_survives_normalization_dedup_and_callback(self):
+        from app.services.callback.spring_client import AnalysisSuccessCallbackPayload, AnalysisSummary
+
+        name = r"src\한글 file.py"
+        (self.root / name).touch()
+        inputs = [
+            RawFinding(tool=tool, type="SQL", severity="HIGH", file_path=path,
+                       message="message", line_start=1)
+            for tool in ["SEMGREP", "CODEQL"]
+            for path in [name, str(self.root / name), "src/한글 file.py"]
+        ]
+        findings = deduplicate_findings(normalize_findings(inputs, self.root))
+        self.assertEqual({item.file_path for item in findings}, {name, "src/한글 file.py"})
+        self.assertEqual(len(findings), 2)
+        body = AnalysisSuccessCallbackPayload(
+            analysis_id=1, repository_id=1, findings=findings, summary=AnalysisSummary(total_count=2),
+        ).model_dump(by_alias=True, mode="json")
+        self.assertEqual({item["filePath"] for item in body["findings"]}, {name, "src/한글 file.py"})
+
+    def test_sarif_encoded_backslash_remains_filename_character(self):
+        name = r"src\한글 file.py"
+        (self.root / name).touch()
+        for artifact in [
+            {"uri": "src%5C%ED%95%9C%EA%B8%80%20file.py"},
+            {"uri": (self.root / name).as_uri()},
+            {"uri": "src%5C%ED%95%9C%EA%B8%80%20file.py", "uriBaseId": "ROOT"},
+        ]:
+            with self.subTest(artifact=artifact):
+                path = sarif_artifact_path(artifact, {"ROOT": {"uri": self.root.as_uri() + "/"}})
+                self.assertEqual(repository_relative_path(path, self.root), name)
 
     def test_internal_symlink_keeps_repository_name(self):
         self.assertEqual(repository_relative_path("internal/한글 file.py", self.root), "internal/한글 file.py")
