@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     SPRING_FAILURE_CALLBACK_PATH: str = "/api/internal/analyses/{analysisId}/failure"
     SPRING_CALLBACK_TIMEOUT_SECONDS: float = 10.0
     SPRING_CALLBACK_MAX_RETRIES: int = 2
+    SPRING_PROGRESS_CALLBACK_TIMEOUT_SECONDS: float = 2.0
+    SPRING_PROGRESS_CALLBACK_MAX_RETRIES: int = 0
     ANALYSIS_CALLBACK_INTERNAL_TOKEN: str | None = None
     
     # Git clone
