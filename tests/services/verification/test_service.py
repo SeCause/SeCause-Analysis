@@ -18,6 +18,16 @@ def complete_judgment(request):
 
 
 class VerificationServiceTest(unittest.TestCase):
+    def test_structural_validation_does_not_guarantee_claim_semantics(self):
+        request = sample_request()
+        request.answer.summary = "입력이 쿼리에 포함되며 모든 테이블 삭제가 가능하다."
+        for claim in ("입력이 쿼리에 포함된다.", "입력이 쿼리에 포함되지 않는다."):
+            with self.subTest(claim=claim):
+                judgment = complete_judgment(request)
+                judgment.results[0].claim = claim
+                # Document the structural validator's boundary, not desired model behavior.
+                validate_judgment(request, judgment)
+
     def test_verified_result_includes_metadata(self):
         request = sample_request()
         client = Mock()

@@ -1,12 +1,12 @@
 """Internal verification endpoints, intentionally separate from analysis routes."""
 
-import hmac
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from redis.exceptions import RedisError
 
+from app.api.token_auth import internal_token_matches
 from app.schemas.verification import VerificationAccepted, VerificationRequest, VerificationResponse
 from app.services.verification.config import get_verification_settings
 from app.services.verification.rules import VerificationInputError
@@ -16,12 +16,11 @@ from app.services.verification.tasks import VerificationNotFoundError, enqueue_v
 def require_verification_token(
     x_internal_token: Annotated[str | None, Header(alias="X-Internal-Token")] = None,
 ) -> None:
+    """Require configured verification credentials; missing configuration returns 503."""
     configured = get_verification_settings().ANALYSIS_CALLBACK_INTERNAL_TOKEN
     if not configured or not configured.strip():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Verification authentication is not configured")
-    if x_internal_token is None or not hmac.compare_digest(
-        x_internal_token.encode("utf-8"), configured.encode("utf-8"),
-    ):
+    if not internal_token_matches(x_internal_token, configured):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
 
 
