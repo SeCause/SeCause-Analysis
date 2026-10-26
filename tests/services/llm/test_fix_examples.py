@@ -202,6 +202,37 @@ class FixExamplesTest(unittest.TestCase):
         self.assertEqual(enriched.recommendation, response.recommendation)
         self.assertEqual(enriched.fix_examples, [])
 
+    def test_validation_logs_counts_and_reasons_without_code(self):
+        cases = [
+            ("x.kt", example("SECRET_CODE"), "unsupported_target_language"),
+            ("x.py", example("SECRET_CODE", "java"), "language_mismatch"),
+            ("x.py", example(""), "empty_code"),
+            ("x.py", example("SECRET_CODE"), "code_validation_failed"),
+        ]
+        for path, item, reason in cases:
+            with self.subTest(reason=reason), self.assertLogs(
+                'app.services.llm.explanation_generator', level='INFO'
+            ) as logs:
+                self.assertEqual(ensure_fix_examples(finding(path), [item]), [])
+            output = "\n".join(logs.output)
+            self.assertIn("reason=" + reason, output)
+            self.assertIn("generated_count=1 accepted_count=0 rejected_count=1", output)
+            self.assertNotIn("SECRET_CODE", output)
+
+    def test_empty_claude_examples_and_missing_source_are_observable(self):
+        import tempfile
+
+        response = ExplanationResult.model_validate(payload([]))
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            'app.services.llm.explanation_generator.ClaudeExplanationClient'
+        ) as client, self.assertLogs('app.services.llm.explanation_generator', level='INFO') as logs:
+            client.return_value.generate_explanation.return_value = response
+            enrich_finding_with_explanation(finding(), [], repo_root=tmpdir)
+        output = "\n".join(logs.output)
+        self.assertIn("available=False chars=0 reason=file_unavailable", output)
+        self.assertIn("Claude fix examples received.", output)
+        self.assertIn("generated_count=0 accepted_count=0 rejected_count=0", output)
+
     def test_prompt_and_tool_contract_allow_empty_examples(self):
         prompt = build_explanation_prompt(finding(), [])
         self.assertIn('Target language: python', prompt)
