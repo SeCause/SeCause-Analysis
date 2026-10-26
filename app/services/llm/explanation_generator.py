@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from app.schemas.finding import Finding
 from app.schemas.explanation import ExplanationResult, FixExample, ReferenceDocument
@@ -7,6 +8,7 @@ from app.services.llm.prompt_builder import build_explanation_prompt
 from app.services.llm.fix_code_validator import (
     canonical_language, normalize_code, target_language,
 )
+from app.services.llm.source_context import read_source_context
 from app.services.rag.hybrid_search import EvidenceDocument
 
 logger = logging.getLogger(__name__)
@@ -27,8 +29,16 @@ def merge_references(*reference_groups: list[str]) -> list[str]:
 def generate_explanation(
     finding: Finding,
     evidence_documents: list[EvidenceDocument],
+    *,
+    repo_root: str | Path | None = None,
 ) -> ExplanationResult:
-    prompt = build_explanation_prompt(finding, evidence_documents)
+    source = (
+        read_source_context(repo_root, finding.file_path, finding.line_start, finding.line_end)
+        if repo_root is not None else None
+    )
+    prompt = build_explanation_prompt(
+        finding, evidence_documents, source_context=source.text if source else None,
+    )
     try:
         explanation = ClaudeExplanationClient().generate_explanation(prompt)
     except ClaudeClientError:
@@ -124,8 +134,10 @@ def build_fallback_explanation(
 def enrich_finding_with_explanation(
     finding: Finding,
     evidence_documents: list[EvidenceDocument],
+    *,
+    repo_root: str | Path | None = None,
 ) -> Finding:
-    explanation = generate_explanation(finding, evidence_documents)
+    explanation = generate_explanation(finding, evidence_documents, repo_root=repo_root)
 
     return finding.model_copy(
         update={

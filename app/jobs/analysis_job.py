@@ -135,6 +135,7 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
             enriched_finding = enrich_finding_with_explanation(
                 finding,
                 evidence_documents,
+                repo_root=context.repo_path,
             )
             context.enriched_findings.append(enriched_finding)
             progress.report(RAG_PROGRESS + LLM_WEIGHT * finding_index // finding_total, "llm")
