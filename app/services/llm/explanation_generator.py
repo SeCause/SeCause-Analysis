@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from app.schemas.finding import Finding
 from app.schemas.explanation import ExplanationResult, FixExample, ReferenceDocument
@@ -7,6 +8,7 @@ from app.services.llm.prompt_builder import build_explanation_prompt
 from app.services.llm.fix_code_validator import (
     canonical_language, normalize_code, target_language,
 )
+from app.services.llm.source_context import SourceContext, read_source_context
 from app.services.rag.hybrid_search import EvidenceDocument
 
 logger = logging.getLogger(__name__)
@@ -27,8 +29,23 @@ def merge_references(*reference_groups: list[str]) -> list[str]:
 def generate_explanation(
     finding: Finding,
     evidence_documents: list[EvidenceDocument],
+    *,
+    repo_root: str | Path | None = None,
+    source: SourceContext | None = None,
 ) -> ExplanationResult:
-    prompt = build_explanation_prompt(finding, evidence_documents)
+    source = source if source is not None else (
+        read_source_context(repo_root, finding.file_path, finding.line_start, finding.line_end)
+        if repo_root is not None else None
+    )
+    logger.info(
+        "Repository source context prepared. file_path=%s available=%s chars=%s reason=%s",
+        finding.file_path, bool(source and source.text),
+        len(source.text) if source and source.text else 0,
+        (source.reason or "complete") if source else "repo_root_unavailable",
+    )
+    prompt = build_explanation_prompt(
+        finding, evidence_documents, source_context=source.text if source else None,
+    )
     try:
         explanation = ClaudeExplanationClient().generate_explanation(prompt)
     except ClaudeClientError:
@@ -40,6 +57,10 @@ def generate_explanation(
         )
         return build_fallback_explanation(finding, evidence_documents)
 
+    logger.info(
+        "Claude fix examples received. file_path=%s generated_count=%s",
+        finding.file_path, len(explanation.fix_examples),
+    )
     references = [
         document.url for document in evidence_documents if document.url is not None
     ]
@@ -68,11 +89,17 @@ def ensure_fix_examples(
         compatible = declared is None or declared == language or (
             language == "tsx" and declared == "typescript"
         )
-        code = normalize_code(example.fixed_code, language) if language and compatible else None
+        reason = None
+        if language is None:
+            reason = "unsupported_target_language"
+        elif not compatible:
+            reason = "language_mismatch"
+        code = normalize_code(example.fixed_code, language) if reason is None else None
         if code is None:
+            reason = reason or ("empty_code" if not example.fixed_code.strip() else "code_validation_failed")
             logger.warning(
-                "Omitting invalid fix example. file_path=%s target_language=%s declared_language=%s",
-                finding.file_path, language, declared,
+                "Omitting invalid fix example. file_path=%s target_language=%s declared_language=%s reason=%s",
+                finding.file_path, language, declared, reason,
             )
             continue
         vulnerable_code = (
@@ -84,6 +111,10 @@ def ensure_fix_examples(
             "fixed_code": code,
             "vulnerable_code": vulnerable_code,
         }))
+    logger.info(
+        "Fix example validation completed. file_path=%s generated_count=%s accepted_count=%s rejected_count=%s",
+        finding.file_path, len(fix_examples), len(accepted), len(fix_examples) - len(accepted),
+    )
     return accepted
 
 
@@ -124,11 +155,18 @@ def build_fallback_explanation(
 def enrich_finding_with_explanation(
     finding: Finding,
     evidence_documents: list[EvidenceDocument],
+    *,
+    repo_root: str | Path | None = None,
 ) -> Finding:
-    explanation = generate_explanation(finding, evidence_documents)
+    source = (
+        read_source_context(repo_root, finding.file_path, finding.line_start, finding.line_end)
+        if repo_root is not None else None
+    )
+    explanation = generate_explanation(finding, evidence_documents, source=source)
 
     return finding.model_copy(
         update={
+            "evidence": source.finding_code if source and source.finding_code is not None else finding.evidence,
             "summary": explanation.summary,
             "root_cause": explanation.root_cause,
             "impact": explanation.impact,

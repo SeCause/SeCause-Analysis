@@ -25,11 +25,13 @@ class AnalysisJobTest(unittest.TestCase):
         with self.pipeline_patches([runner]) as callback, patch(
             "app.jobs.analysis_job.search_evidence_for_findings", return_value=[[]],
         ) as search, patch(
-            "app.jobs.analysis_job.enrich_finding_with_explanation", side_effect=lambda finding, _: finding,
-        ), self.assertLogs("app.services.normalizer.finding_normalizer", level="WARNING"):
+            "app.jobs.analysis_job.enrich_finding_with_explanation", side_effect=lambda finding, _, **kwargs: finding,
+        ) as enrich, self.assertLogs("app.services.normalizer.finding_normalizer", level="WARNING"):
             result = run_analysis_job(self.payload)
         self.assertEqual(result["finding_count"], 1)
         self.assertEqual(len(search.call_args.args[0]), 1)
+        enrich.assert_called_once()
+        self.assertEqual(str(enrich.call_args.kwargs["repo_root"]), "/tmp/repository")
         payload = callback.send_success.call_args.args[0].model_dump(by_alias=True)
         self.assertEqual(payload["findings"][0]["filePath"], "src/example.py")
         self.assertNotIn("/tmp/repository", str(payload))
@@ -152,7 +154,7 @@ class AnalysisJobTest(unittest.TestCase):
             return_value=[],
         ) as search, patch(
             "app.jobs.analysis_job.enrich_finding_with_explanation",
-            side_effect=lambda finding, evidence: finding,
+            side_effect=lambda finding, evidence, **kwargs: finding,
         ):
             result = run_analysis_job(self.payload)
         self.assertEqual(result["finding_count"], 2)
@@ -183,7 +185,7 @@ class AnalysisJobTest(unittest.TestCase):
             return_value=[[], []],
         ), patch(
             "app.jobs.analysis_job.enrich_finding_with_explanation",
-            side_effect=lambda finding, _evidence: finding,
+            side_effect=lambda finding, _evidence, **kwargs: finding,
         ), self.assertLogs(
             "app.jobs.analysis_job",
             level="INFO",
