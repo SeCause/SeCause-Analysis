@@ -8,7 +8,7 @@ from app.services.llm.prompt_builder import build_explanation_prompt
 from app.services.llm.fix_code_validator import (
     canonical_language, normalize_code, target_language,
 )
-from app.services.llm.source_context import read_source_context
+from app.services.llm.source_context import SourceContext, read_source_context
 from app.services.rag.hybrid_search import EvidenceDocument
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,9 @@ def generate_explanation(
     evidence_documents: list[EvidenceDocument],
     *,
     repo_root: str | Path | None = None,
+    source: SourceContext | None = None,
 ) -> ExplanationResult:
-    source = (
+    source = source if source is not None else (
         read_source_context(repo_root, finding.file_path, finding.line_start, finding.line_end)
         if repo_root is not None else None
     )
@@ -157,10 +158,15 @@ def enrich_finding_with_explanation(
     *,
     repo_root: str | Path | None = None,
 ) -> Finding:
-    explanation = generate_explanation(finding, evidence_documents, repo_root=repo_root)
+    source = (
+        read_source_context(repo_root, finding.file_path, finding.line_start, finding.line_end)
+        if repo_root is not None else None
+    )
+    explanation = generate_explanation(finding, evidence_documents, source=source)
 
     return finding.model_copy(
         update={
+            "evidence": source.finding_code if source and source.finding_code is not None else finding.evidence,
             "summary": explanation.summary,
             "root_cause": explanation.root_cause,
             "impact": explanation.impact,

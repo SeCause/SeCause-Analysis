@@ -20,6 +20,7 @@ class SourceContextTest(unittest.TestCase):
         self.assertEqual(result.text.splitlines()[0], "5 | code_5")
         self.assertEqual(result.text.splitlines()[-1], "36 | code_36")
         self.assertIn("20 | code_20\n21 | code_21", result.text)
+        self.assertEqual(result.finding_code, "code_20\ncode_21")
 
     def test_file_boundaries_and_single_line(self):
         result = read_source_context(self.root, "example.py", 1)

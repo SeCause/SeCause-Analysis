@@ -10,6 +10,7 @@ from app.services.normalizer.repository_path import InvalidFindingPath, reposito
 class SourceContext:
     text: str | None
     reason: str | None = None
+    finding_code: str | None = None
 
 
 def read_source_context(
@@ -75,4 +76,5 @@ def read_source_context(
             right -= 1
 
     text = "\n".join(f"{number} | {lines[number - 1]}" for number in range(left, right + 1))
-    return SourceContext(text, "truncated" if (left, right) != (first, last) else None)
+    finding_code = "\n".join(lines[line_start - 1:end])
+    return SourceContext(text, "truncated" if (left, right) != (first, last) else None, finding_code)

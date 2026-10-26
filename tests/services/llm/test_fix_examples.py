@@ -187,6 +187,7 @@ class FixExamplesTest(unittest.TestCase):
         body = AnalysisSuccessCallbackPayload(analysis_id=1, repository_id=2,
             findings=[enriched], summary=AnalysisSummary(total_count=1)).model_dump(by_alias=True, mode='json')
         self.assertEqual(body['findings'][0]['fixExamples'][0]['fixedCode'], code)
+        self.assertEqual(body['findings'][0]['evidence'], code)
 
     def test_missing_source_preserves_explanation(self):
         import tempfile
@@ -232,6 +233,41 @@ class FixExamplesTest(unittest.TestCase):
         self.assertIn("available=False chars=0 reason=file_unavailable", output)
         self.assertIn("Claude fix examples received.", output)
         self.assertIn("generated_count=0 accepted_count=0 rejected_count=0", output)
+
+    def test_source_evidence_survives_llm_failure_without_extra_file_read(self):
+        import tempfile
+        from pathlib import Path
+        from app.services.llm.source_context import read_source_context
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir()
+            (root / "src/main.py").write_text("before()\n    unsafe(input)\nafter()", encoding="utf-8")
+            item = finding()
+            item.line_start = item.line_end = 2
+            item.evidence = "requires login"
+            with patch('app.services.llm.explanation_generator.read_source_context', wraps=read_source_context) as read, patch(
+                'app.services.llm.explanation_generator.ClaudeExplanationClient', side_effect=ClaudeClientError('mock')
+            ):
+                result = enrich_finding_with_explanation(item, [], repo_root=root)
+                read.assert_called_once()
+        body = AnalysisSuccessCallbackPayload(analysis_id=1, repository_id=2,
+            findings=[result], summary=AnalysisSummary(total_count=1)).model_dump(by_alias=True, mode='json')
+        self.assertEqual(body['findings'][0]['evidence'], "    unsafe(input)")
+        self.assertEqual(body['findings'][0]['fixExamples'], [])
+        self.assertEqual(item.evidence, "requires login")
+
+    def test_unavailable_source_preserves_scanner_evidence(self):
+        import tempfile
+
+        item = finding()
+        item.evidence = "original evidence"
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            'app.services.llm.explanation_generator.ClaudeExplanationClient'
+        ) as client:
+            client.return_value.generate_explanation.return_value = ExplanationResult.model_validate(payload([]))
+            result = enrich_finding_with_explanation(item, [], repo_root=tmpdir)
+        self.assertEqual(result.evidence, "original evidence")
 
     def test_prompt_and_tool_contract_allow_empty_examples(self):
         prompt = build_explanation_prompt(finding(), [])
