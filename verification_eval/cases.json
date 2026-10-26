@@ -1,0 +1,153 @@
+[
+  {
+    "id": "supported",
+    "request": {
+      "answer": {
+        "summary": "사용자 ID는 SQL 매개변수로 전달된다.",
+        "rootCause": "사용자 ID는 SQL 문자열과 분리된 매개변수로 전달된다.",
+        "impact": "관리자가 아닌 요청은 PermissionError로 거절된다."
+      },
+      "evidence": [
+        {
+          "evidenceId": "code-1",
+          "kind": "CODE",
+          "content": "def handle(request, db):\n    if not request.is_admin:\n        raise PermissionError()\n    return db.execute(\"SELECT name FROM users WHERE id = ?\", (request.user_id,))",
+          "filePath": "example.py"
+        }
+      ]
+    },
+    "expected": {
+      "summary": [
+        "SUPPORTED"
+      ],
+      "rootCause": [
+        "SUPPORTED"
+      ],
+      "impact": [
+        "SUPPORTED"
+      ]
+    },
+    "review_focus": "매개변수 바인딩을 코드 인용으로 뒷받침하는지 확인한다."
+  },
+  {
+    "id": "compound",
+    "request": {
+      "answer": {
+        "summary": "사용자 ID는 SQL 매개변수로 전달되며 데이터베이스 계정은 모든 테이블을 삭제할 수 있다.",
+        "rootCause": "사용자 ID는 SQL 문자열과 분리된 매개변수로 전달된다.",
+        "impact": "관리자가 아닌 요청은 PermissionError로 거절된다."
+      },
+      "evidence": [
+        {
+          "evidenceId": "code-1",
+          "kind": "CODE",
+          "content": "def handle(request, db):\n    if not request.is_admin:\n        raise PermissionError()\n    return db.execute(\"SELECT name FROM users WHERE id = ?\", (request.user_id,))",
+          "filePath": "example.py"
+        }
+      ]
+    },
+    "expected": {
+      "summary": [
+        "SUPPORTED",
+        "INSUFFICIENT_EVIDENCE"
+      ],
+      "rootCause": [
+        "SUPPORTED"
+      ],
+      "impact": [
+        "SUPPORTED"
+      ]
+    },
+    "review_focus": "복합 주장의 두 부분을 모두 보존하고 DB 권한을 추정하지 않는지 확인한다."
+  },
+  {
+    "id": "condition",
+    "request": {
+      "answer": {
+        "summary": "관리자 여부와 관계없이 모든 요청은 데이터베이스 조회를 실행한다.",
+        "rootCause": "사용자 ID는 SQL 문자열과 분리된 매개변수로 전달된다.",
+        "impact": "관리자가 아닌 요청은 PermissionError로 거절된다."
+      },
+      "evidence": [
+        {
+          "evidenceId": "code-1",
+          "kind": "CODE",
+          "content": "def handle(request, db):\n    if not request.is_admin:\n        raise PermissionError()\n    return db.execute(\"SELECT name FROM users WHERE id = ?\", (request.user_id,))",
+          "filePath": "example.py"
+        }
+      ]
+    },
+    "expected": {
+      "summary": [
+        "CONTRADICTED"
+      ],
+      "rootCause": [
+        "SUPPORTED"
+      ],
+      "impact": [
+        "SUPPORTED"
+      ]
+    },
+    "review_focus": "관리자 조건을 누락하지 않고 비관리자 요청 거절을 반증으로 인용하는지 확인한다."
+  },
+  {
+    "id": "negation",
+    "request": {
+      "answer": {
+        "summary": "관리자가 아닌 요청은 거절되지 않는다.",
+        "rootCause": "사용자 ID는 SQL 문자열과 분리된 매개변수로 전달된다.",
+        "impact": "관리자가 아닌 요청은 PermissionError로 거절된다."
+      },
+      "evidence": [
+        {
+          "evidenceId": "code-1",
+          "kind": "CODE",
+          "content": "def handle(request, db):\n    if not request.is_admin:\n        raise PermissionError()\n    return db.execute(\"SELECT name FROM users WHERE id = ?\", (request.user_id,))",
+          "filePath": "example.py"
+        }
+      ]
+    },
+    "expected": {
+      "summary": [
+        "CONTRADICTED"
+      ],
+      "rootCause": [
+        "SUPPORTED"
+      ],
+      "impact": [
+        "SUPPORTED"
+      ]
+    },
+    "review_focus": "claim에서 부정을 긍정으로 바꾸지 않고 원문의 의미를 유지하는지 확인한다."
+  },
+  {
+    "id": "missing_evidence",
+    "request": {
+      "answer": {
+        "summary": "이 서비스의 데이터베이스 계정은 모든 테이블을 삭제할 수 있다.",
+        "rootCause": "사용자 ID는 SQL 문자열과 분리된 매개변수로 전달된다.",
+        "impact": "관리자가 아닌 요청은 PermissionError로 거절된다."
+      },
+      "evidence": [
+        {
+          "evidenceId": "code-1",
+          "kind": "CODE",
+          "content": "def handle(request, db):\n    if not request.is_admin:\n        raise PermissionError()\n    return db.execute(\"SELECT name FROM users WHERE id = ?\", (request.user_id,))",
+          "filePath": "example.py"
+        }
+      ]
+    },
+    "expected": {
+      "summary": [
+        "INSUFFICIENT_EVIDENCE"
+      ],
+      "rootCause": [
+        "SUPPORTED"
+      ],
+      "impact": [
+        "SUPPORTED"
+      ]
+    },
+    "review_focus": "권한 정보 부재를 모순으로 취급하거나 근거 없이 지지하지 않는지 확인한다."
+  }
+]

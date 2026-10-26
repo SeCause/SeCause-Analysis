@@ -3,7 +3,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.api.routes import analyze
+from app.api.routes import analyze, verifications
 from app.core.config import settings
 from app.core.database import engine, init_db
 
@@ -42,6 +42,7 @@ app = FastAPI(
 
 # 라우터 등록
 app.include_router(analyze.router, prefix="/api", tags=["analyze"])
+app.include_router(verifications.router, prefix="/api", tags=["verification"])
 
 
 # Health Check 엔드포인트

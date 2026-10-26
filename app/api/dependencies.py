@@ -1,9 +1,9 @@
-import hmac
 import logging
 from typing import Annotated
 
 from fastapi import Header, HTTPException, status
 
+from app.api.token_auth import internal_token_matches
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -22,10 +22,7 @@ def verify_internal_token(
         )
         return
 
-    if x_internal_token is None or not hmac.compare_digest(
-        x_internal_token.encode("utf-8"),
-        configured_token.encode("utf-8"),
-    ):
+    if not internal_token_matches(x_internal_token, configured_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized",
