@@ -22,9 +22,13 @@ def read_source_context(
     surrounding_lines: int = 15,
     max_file_bytes: int = 256 * 1024,
     max_chars: int = 6000,
+    max_finding_chars: int = 6000,
 ) -> SourceContext:
-    """Return numbered lines, or a reason without leaking file contents to logs."""
-    if surrounding_lines < 0 or max_file_bytes <= 0 or max_chars <= 0:
+    """Read source with independent prompt/snippet budgets.
+
+    Internal symlinks are allowed; paths resolving outside the repository are rejected.
+    """
+    if surrounding_lines < 0 or max_file_bytes <= 0 or max_chars <= 0 or max_finding_chars <= 0:
         raise ValueError("Source context limits must be positive (surrounding_lines may be zero)")
     if line_start is None or line_start < 1 or (line_end is not None and line_end < line_start):
         return SourceContext(None, "invalid_line_range")
@@ -42,7 +46,12 @@ def read_source_context(
             return SourceContext(None, "file_too_large")
         if b"\x00" in data:
             return SourceContext(None, "binary_file")
-        lines = data.decode("utf-8-sig").splitlines()
+        # Only LF/CRLF/CR delimit source lines; form feed and Unicode separators
+        # are source characters and must not shift scanner line numbers.
+        decoded = data.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+        lines = decoded.split("\n")
+        if lines[-1] == "":
+            lines.pop()
     except UnicodeError:
         return SourceContext(None, "unsupported_encoding")
     except (InvalidFindingPath, ValueError, RuntimeError):
@@ -52,6 +61,10 @@ def read_source_context(
     end = line_end if line_end is not None else line_start
     if end > len(lines):
         return SourceContext(None, "invalid_line_range")
+
+    finding_code = "\n".join(lines[line_start - 1:end])
+    if len(finding_code) > max_finding_chars:
+        finding_code = None
 
     # Prefix lengths let us measure any contiguous window in constant time.
     first = max(1, line_start - surrounding_lines)
@@ -65,7 +78,7 @@ def read_source_context(
 
     # Never drop part of the finding just to fit surrounding context.
     if window_chars(line_start, end) > max_chars:
-        return SourceContext(None, "finding_range_too_long")
+        return SourceContext(None, "finding_range_too_long", finding_code)
 
     left, right = first, last
     while window_chars(left, right) > max_chars:
@@ -76,5 +89,7 @@ def read_source_context(
             right -= 1
 
     text = "\n".join(f"{number} | {lines[number - 1]}" for number in range(left, right + 1))
-    finding_code = "\n".join(lines[line_start - 1:end])
-    return SourceContext(text, "truncated" if (left, right) != (first, last) else None, finding_code)
+    reason = "truncated" if (left, right) != (first, last) else None
+    if finding_code is None:
+        reason = "finding_code_too_long"
+    return SourceContext(text, reason, finding_code)

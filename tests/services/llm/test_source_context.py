@@ -84,3 +84,26 @@ class SourceContextTest(unittest.TestCase):
                                      surrounding_lines=0, max_chars=len(expected))
         self.assertEqual(result.text, expected)
         self.assertIsNone(result.reason)
+
+    def test_prompt_prefix_overflow_preserves_callback_code(self):
+        code = "x" * 5997
+        self.path.write_text(code, encoding="utf-8")
+        result = read_source_context(self.root, "example.py", 1)
+        self.assertIsNone(result.text)
+        self.assertEqual(result.finding_code, code)
+
+    def test_callback_budget_is_independent_and_does_not_cut_code(self):
+        self.path.write_text("abcdefgh", encoding="utf-8")
+        result = read_source_context(self.root, "example.py", 1, max_finding_chars=7)
+        self.assertEqual(result.text, "1 | abcdefgh")
+        self.assertIsNone(result.finding_code)
+        self.assertEqual(result.reason, "finding_code_too_long")
+
+    def test_special_characters_do_not_shift_line_numbers(self):
+        for newline in ["\n", "\r\n", "\r"]:
+            with self.subTest(newline=newline):
+                self.path.write_bytes(newline.join(["first\fextra", "second\u2028extra", "third", ""]).encode())
+                result = read_source_context(self.root, "example.py", 2, 3, surrounding_lines=0)
+                self.assertEqual(result.finding_code, "second\u2028extra\nthird")
+                self.assertEqual(result.text, "2 | second\u2028extra\n3 | third")
+                self.assertEqual(read_source_context(self.root, "example.py", 4).reason, "invalid_line_range")
