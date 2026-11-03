@@ -89,6 +89,7 @@ class ClaudeExplanationClient:
             ],
         )
 
+        logger.info("Claude response received. stop_reason=%s", getattr(response, "stop_reason", None))
         for block in response.content:
             if (
                 getattr(block, "type", None) == "tool_use"

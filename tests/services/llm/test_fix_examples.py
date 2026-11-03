@@ -269,6 +269,22 @@ class FixExamplesTest(unittest.TestCase):
             result = enrich_finding_with_explanation(item, [], repo_root=tmpdir)
         self.assertEqual(result.evidence, "original evidence")
 
+    def test_typescript_declarations_survive_parsing_validation_merge_and_serialization(self):
+        for code in ['type SafeInput = { id: string };',
+                     'interface SafeInput { readonly id: string; }',
+                     'enum Role { User, Admin }']:
+            response = _build_explanation_result(payload([
+                dict(fixedCode=code, language="TypeScript", explanation="타입을 제한합니다.")
+            ]))
+            with patch('app.services.llm.explanation_generator.ClaudeExplanationClient') as client:
+                client.return_value.generate_explanation.return_value = response
+                enriched = enrich_finding_with_explanation(finding('src/input.ts'), [])
+            body = AnalysisSuccessCallbackPayload(analysis_id=1, repository_id=2,
+                findings=[enriched], summary=AnalysisSummary(total_count=1)).model_dump(by_alias=True, mode='json')
+            self.assertEqual(body['findings'][0]['fixExamples'][0]['fixedCode'], code)
+        for code in ['type SafeInput = ;', 'interface SafeInput {', '타입을 제한하세요.']:
+            self.assertEqual(ensure_fix_examples(finding('src/input.ts'), [example(code)]), [])
+
     def test_reference_sources_survive_normal_and_fallback_callbacks(self):
         from app.services.rag.hybrid_search import EvidenceDocument
 
