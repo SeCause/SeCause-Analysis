@@ -1,4 +1,5 @@
 import logging
+from typing import Literal
 
 from pydantic import Field, ValidationError, field_validator
 
@@ -8,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class ReferenceDocument(CamelModel):
+    source_type: Literal["OWASP", "CWE", "OTHER"] = "OTHER"
     title: str
     url: str | None = None
 

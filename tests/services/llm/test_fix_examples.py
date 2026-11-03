@@ -269,6 +269,35 @@ class FixExamplesTest(unittest.TestCase):
             result = enrich_finding_with_explanation(item, [], repo_root=tmpdir)
         self.assertEqual(result.evidence, "original evidence")
 
+    def test_reference_sources_survive_normal_and_fallback_callbacks(self):
+        from app.services.rag.hybrid_search import EvidenceDocument
+
+        from app.services.rag.documents import RagSourceType
+        from app.services.rag.hybrid_search import RankedSearchResult, _to_evidence_document
+        from app.services.rag.vector_store import SecurityDocumentSearchResult
+
+        documents = [
+            _to_evidence_document(RankedSearchResult(SecurityDocumentSearchResult(
+                security_document_id=index, source_type=source, title=source.value,
+                url='https://example.com/' + source.value, content='evidence',
+            ), score=1.0))
+            for index, source in enumerate(RagSourceType)
+        ]
+        documents.append(EvidenceDocument(title='custom', source='custom', content='evidence'))
+        for fail in [False, True]:
+            with patch('app.services.llm.explanation_generator.ClaudeExplanationClient') as client:
+                if fail:
+                    client.return_value.generate_explanation.side_effect = ClaudeClientError('mock')
+                else:
+                    client.return_value.generate_explanation.return_value = _build_explanation_result(payload([]))
+                enriched = enrich_finding_with_explanation(finding(), documents)
+            body = AnalysisSuccessCallbackPayload(analysis_id=1, repository_id=2,
+                findings=[enriched], summary=AnalysisSummary(total_count=1)).model_dump(by_alias=True, mode='json')
+            references = body['findings'][0]['referenceDocuments']
+            self.assertEqual([item['sourceType'] for item in references], ['OWASP', 'CWE', 'OTHER', 'OTHER'])
+            self.assertEqual([item['url'] for item in references], [item.url for item in documents])
+            self.assertEqual([item['title'] for item in references], [item.title for item in documents])
+
     def test_prompt_and_tool_contract_allow_empty_examples(self):
         prompt = build_explanation_prompt(finding(), [])
         self.assertIn('Target language: python', prompt)

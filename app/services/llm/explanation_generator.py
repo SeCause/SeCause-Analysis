@@ -25,6 +25,18 @@ def merge_references(*reference_groups: list[str]) -> list[str]:
     return list(dict.fromkeys(references))
 
 
+# 출처는 생성 모델이 아닌 RAG 메타데이터를 기준으로 정상/fallback 모두에서 보존한다.
+def build_reference_documents(documents: list[EvidenceDocument]) -> list[ReferenceDocument]:
+    return [
+        ReferenceDocument(
+            title=document.title,
+            url=document.url,
+            source_type=document.source if document.source in {"OWASP", "CWE"} else "OTHER",
+        )
+        for document in documents
+    ]
+
+
 # Claude API로 Finding 설명과 수정 가이드를 생성
 def generate_explanation(
     finding: Finding,
@@ -69,10 +81,7 @@ def generate_explanation(
         update={
             "references": merge_references(explanation.references, references),
             "fix_examples": ensure_fix_examples(finding, explanation.fix_examples),
-            "reference_documents": [
-                ReferenceDocument(title=document.title, url=document.url)
-                for document in evidence_documents
-            ],
+            "reference_documents": build_reference_documents(evidence_documents),
         }
     )
 
@@ -144,10 +153,7 @@ def build_fallback_explanation(
         ),
         fix_examples=[],
         references=references,
-        reference_documents=[
-            ReferenceDocument(title=document.title, url=document.url)
-            for document in evidence_documents
-        ],
+        reference_documents=build_reference_documents(evidence_documents),
     )
 
 
