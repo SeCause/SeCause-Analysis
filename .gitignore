@@ -225,3 +225,6 @@ rag_documents/processed/
 /benchmark/
 /benchmarks/
 AUDIT_REPORT.md
+
+# Local full-stack OAuth credentials
+.env.local-stack

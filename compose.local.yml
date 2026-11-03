@@ -1,0 +1,156 @@
+name: secause-local
+
+x-analysis: &analysis
+  image: secause-analysis-local
+  build: .
+  env_file: ${LOCAL_ENV_FILE:-.env}
+  environment: &analysis-env
+    DATABASE_URL: postgresql+asyncpg://secause:secause_local@postgres:5432/secause
+    REDIS_URL: redis://redis:6379/0
+    SPRING_CALLBACK_BASE_URL: http://backend:8080
+    ANALYSIS_CALLBACK_INTERNAL_TOKEN: secause-local-internal-token
+    GIT_CLONE_ROOT_DIR: /tmp/secause-analysis
+  volumes:
+    - ./app:/app/app:ro
+    - ./scripts:/app/scripts:ro
+    - ./rag_documents:/app/rag_documents:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: secause
+      POSTGRES_PASSWORD: secause_local
+      POSTGRES_DB: secause
+    ports:
+      - '127.0.0.1:${LOCAL_DB_PORT:-15434}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/local/init-db.sh:/docker-entrypoint-initdb.d/10-secause.sh:ro
+      - ${BACKEND_DIR:-../SeCause-BE}/src/main/resources/schema.sql:/backend-schema.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U secause -d secause']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  analysis-api:
+    <<: *analysis
+    ports:
+      - '127.0.0.1:8001:8001'
+
+  analysis-worker:
+    <<: *analysis
+    command: ['python', '-m', 'app.jobs.worker']
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, socket; from redis import Redis; from rq import Worker; assert any(w.hostname == socket.gethostname() for w in Worker.all(connection=Redis.from_url(os.environ['REDIS_URL'])))"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    depends_on:
+      analysis-api:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  backend:
+    image: eclipse-temurin:21-jdk
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - |
+        cp /source/gradlew /source/build.gradle /source/settings.gradle /workspace/
+        rm -rf /workspace/src /workspace/gradle
+        cp -R /source/src /source/gradle /workspace/
+        exec sh ./gradlew --no-daemon bootRun
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      LOCAL_DB_URL: jdbc:postgresql://postgres:5432/secause
+      LOCAL_DB_USERNAME: secause
+      LOCAL_DB_PASSWORD: secause_local
+      SPRING_SQL_INIT_MODE: never
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      FASTAPI_ANALYSIS_REQUEST_LOCAL: http://analysis-api:8001/api/internal/analyze
+      INTERNAL_API_TOKEN: secause-local-internal-token
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: http://localhost:3000/login/callback
+      GRADLE_USER_HOME: /gradle-cache
+    volumes:
+      - ${BACKEND_DIR:-../SeCause-BE}:/source:ro
+      - backend-work:/workspace
+      - backend-build:/workspace/build
+      - backend-gradle:/workspace/.gradle
+      - gradle-cache:/gradle-cache
+    ports:
+      - '127.0.0.1:8080:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      analysis-api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /api-docs HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3; head -1 <&3 | grep -q 200'"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  frontend:
+    image: node:22-bookworm-slim
+    working_dir: /workspace
+    command: ['sh', '-c', 'corepack enable && corepack prepare pnpm@10.33.2 --activate && pnpm install --frozen-lockfile --ignore-scripts && pnpm dev --hostname 0.0.0.0']
+    environment:
+      COREPACK_ENABLE_AUTO_PIN: 0
+      API_BASE_URL: http://backend:8080
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+      NEXT_PUBLIC_GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+    volumes:
+      - ${FRONTEND_DIR:-../SeCause-FE}:/workspace
+      - frontend-store:/workspace/.pnpm-store
+      - frontend-modules:/workspace/node_modules
+      - frontend-next:/workspace/.next
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
+volumes:
+  postgres-data:
+  redis-data:
+  backend-work:
+  backend-build:
+  backend-gradle:
+  gradle-cache:
+  frontend-store:
+  frontend-modules:
+  frontend-next:
