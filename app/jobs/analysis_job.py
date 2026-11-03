@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Callable
 
+from app.collector.code_statistics import collect_code_details
 from app.collector.git_collector import cleanup_repository, shallow_clone_repository
 from app.jobs.secret_store import (
     delete_github_token_reference,
@@ -98,6 +99,8 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
                 context.analysis_id,
             )
         )
+
+        context.code_details = collect_code_details(context.repo_path)
 
         #추후 runner 내부 조정 필요
         progress.report(CLONE_PROGRESS, "clone")
@@ -287,6 +290,7 @@ def build_success_callback_payload(
         analysis_id=context.analysis_id,
         repository_id=context.repository_id,
         findings=context.enriched_findings,
+        code_details=context.code_details,
         summary=AnalysisSummary(total_count=len(context.enriched_findings)),
         failed_scanners=context.failed_scanners,
     )

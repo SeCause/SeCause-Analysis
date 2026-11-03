@@ -4,6 +4,7 @@ from pydantic import AliasChoices, Field
 
 from app.schemas.base import AnalysisTargetPayload
 from app.schemas.finding import Finding
+from app.schemas.code_details import CodeDetails
 
 
 class AnalysisJobContext(AnalysisTargetPayload):
@@ -13,6 +14,7 @@ class AnalysisJobContext(AnalysisTargetPayload):
         serialization_alias="githubTokenReference",
     )
     repo_path: Optional[str] = None
+    code_details: CodeDetails = Field(default_factory=CodeDetails)
     raw_findings: list[dict[str, Any]] = Field(default_factory=list)
     normalized_findings: list[Finding] = Field(default_factory=list)
     enriched_findings: list[Finding] = Field(default_factory=list)

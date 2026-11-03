@@ -5,6 +5,7 @@ import shutil
 import tempfile
 
 from app.core.config import settings
+from app.collector.source_files import count_text_lines, iter_source_files
 from app.schemas.finding import FindingTool
 from app.services.scanner.base import AnalyzerContext, AnalyzerError, RawFinding
 from app.services.scanner.codeql_sarif_parser import parse_sarif_file
@@ -13,19 +14,6 @@ from app.services.scanner.process_runner import execute_command
 logger = logging.getLogger(__name__)
 MAX_CODEQL_OUTPUT_CHARS = 1200
 MAX_CODEQL_STDOUT_CHARS = 10 * 1024 * 1024
-EXCLUDED_SCAN_DIRS = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-    "out",
-    "target",
-    "venv",
-}
 
 
 @dataclass(frozen=True)
@@ -147,20 +135,13 @@ def detect_codeql_languages(repo_path: Path) -> list[CodeQLLanguage]:
 
 # 분석 대상 source file 확장자를 수집
 def collect_source_suffixes(repo_path: Path) -> set[str]:
+    supported = {extension for language in SUPPORTED_CODEQL_LANGUAGES
+                 for extension in language.extensions}
     return {
         path.suffix.lower()
-        for path in repo_path.rglob("*")
-        if is_source_file_candidate(repo_path, path)
+        for path in iter_source_files(repo_path)
+        if path.suffix.lower() in supported and count_text_lines(path) is not None
     }
-
-
-# CodeQL 언어 감지에 사용할 source file 후보인지 판별
-def is_source_file_candidate(repo_path: Path, path: Path) -> bool:
-    if not path.is_file():
-        return False
-
-    relative_parts = path.relative_to(repo_path).parts
-    return not any(part in EXCLUDED_SCAN_DIRS for part in relative_parts[:-1])
 
 
 # CodeQL 작업 root 경로를 생성

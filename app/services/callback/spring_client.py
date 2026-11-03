@@ -9,6 +9,7 @@ from pydantic import ConfigDict, Field
 
 from app.schemas.base import CamelModel, to_camel
 from app.schemas.finding import Finding
+from app.schemas.code_details import CodeDetails
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class AnalysisSuccessCallbackPayload(CallbackPayload):
     repository_id: int
     status: AnalysisStatus = AnalysisStatus.COMPLETED
     findings: list[Finding] = Field(default_factory=list)
+    code_details: CodeDetails = Field(default_factory=CodeDetails)
     summary: AnalysisSummary
     failed_scanners: list[str] = Field(default_factory=list)
 
