@@ -126,6 +126,7 @@ services:
       COREPACK_ENABLE_AUTO_PIN: 0
       API_BASE_URL: http://backend:8080
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+      NEXT_PUBLIC_USE_REPOSITORY_MOCK: 'false'
       NEXT_PUBLIC_GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
     volumes:
       - ${FRONTEND_DIR:-../SeCause-FE}:/workspace
