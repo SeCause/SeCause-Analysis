@@ -10,18 +10,53 @@ from zipfile import ZipFile
 ROOT = Path(__file__).resolve().parents[2] / 'rag_documents' / 'raw'
 
 
+def prepare_owasp(raw_root: Path) -> None:
+    """Publish a complete download together and preserve user-prepared documents.
+
+    Existing indexable documents are treated as user-managed. New downloads are
+    staged on the same filesystem; interrupted directory swaps recover on retry.
+    """
+    raw_root.mkdir(parents=True, exist_ok=True)
+    owasp = raw_root / 'owasp'
+    backup = raw_root / '.owasp-backup'
+    if backup.exists():
+        if not owasp.exists():
+            backup.rename(owasp)
+        else:
+            shutil.rmtree(backup)
+    if any(not path.name.upper().startswith('LICENSE') for path in owasp.glob('*.md')):
+        return
+    with tempfile.TemporaryDirectory(prefix='.owasp-', dir=raw_root) as directory:
+        workspace = Path(directory)
+        source = workspace / 'checkout'
+        staged = workspace / 'ready'
+        subprocess.run(['git', 'clone', '--depth', '1',
+                        'https://github.com/OWASP/CheatSheetSeries.git', str(source)], check=True)
+        documents = list((source / 'cheatsheets').glob('*.md'))
+        if not any(not path.name.upper().startswith('LICENSE') for path in documents):
+            raise ValueError('Downloaded OWASP checkout has no indexable documents')
+        if owasp.exists():
+            shutil.copytree(owasp, staged)
+        else:
+            staged.mkdir()
+        for path in [*documents, *source.glob('LICENSE*')]:
+            destination = staged / path.name
+            if not destination.exists():
+                shutil.copy2(path, destination)
+        if owasp.exists():
+            owasp.rename(backup)
+        try:
+            staged.rename(owasp)
+        except BaseException:
+            if backup.exists():
+                backup.rename(owasp)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+
+
 def main():
-    owasp = ROOT / 'owasp'
-    if not list(owasp.glob('*.md')):
-        with tempfile.TemporaryDirectory() as directory:
-            subprocess.run(['git', 'clone', '--depth', '1',
-                            'https://github.com/OWASP/CheatSheetSeries.git', directory], check=True)
-            source = Path(directory)
-            owasp.mkdir(parents=True, exist_ok=True)
-            for path in (source / 'cheatsheets').glob('*.md'):
-                shutil.copy2(path, owasp / path.name)
-            for path in source.glob('LICENSE*'):
-                shutil.copy2(path, owasp / path.name)
+    prepare_owasp(ROOT)
     cwe = ROOT / 'cwe' / 'cwe.xml'
     if not cwe.exists():
         with urlopen('https://cwe.mitre.org/data/xml/cwec_latest.xml.zip', timeout=120) as response:

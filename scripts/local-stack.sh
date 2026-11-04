@@ -68,10 +68,7 @@ case "$command" in
     if [[ $# -eq 0 ]]; then set -- analysis-worker; fi
     compose restart "$@" ;;
   index-rag)
-    if [[ ! -f rag_documents/raw/cwe/cwe.xml || ! -d rag_documents/raw/owasp ]]; then
-      echo 'Prepare raw sources as described in rag_documents/README.md first.' >&2
-      exit 1
-    fi
+    # The indexer validates --source and --raw-root inside the container.
     compose exec -T analysis-api python scripts/index_rag_documents.py "$@"
     ;;
   check) compose config --quiet ;;

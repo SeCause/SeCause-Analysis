@@ -172,6 +172,8 @@ SeCause-Analysis/
 ./scripts/local-stack.sh index-rag
 ```
 
+OWASP만 확인할 때는 `./scripts/local-stack.sh index-rag --source owasp --dry-run`으로 실행할 수 있습니다. `--raw-root`도 그대로 색인기에 전달되며 경로는 컨테이너 내부 기준입니다(기본 `/app/rag_documents/raw`). 선택한 소스의 원문만 검사하고, 원문이 없으면 색인을 중단합니다. 새 OWASP 다운로드는 전체 복사가 끝난 뒤 폴더를 교체하므로 실패 후 재실행할 수 있으며, 기존에 직접 준비한 문서는 유지합니다.
+
 `up`은 PostgreSQL(pgvector), Redis, 분석 API, RQ worker, 백엔드, 프론트를 준비 순서에 맞춰 실행합니다. 처음에는 이미지·Gradle·pnpm 의존성 다운로드가 필요하고 이후에는 캐시를 재사용합니다. `index-rag`는 실제 임베딩 API를 호출합니다. 빈 DB에서 색인 없이 분석하면 운영과 같은 RAG 근거를 사용할 수 없습니다. 원문이 이미 있다면 `prepare-rag`는 기존 파일을 유지합니다.
 
 브라우저에서 `http://localhost:3000`에 접속해 로그인 후 실제 저장소를 분석합니다. 백엔드는 `8080`, 분석 API는 `8001`, 테스트 DB는 `15434` 포트를 사용하며 모두 localhost에만 공개됩니다. 테스트 DB 포트는 `LOCAL_DB_PORT`로 변경할 수 있습니다. 내부 통신과 토큰은 로컬 전용 값으로 맞춰지고 기존 외부 DB·콜백 주소는 사용하지 않습니다.
