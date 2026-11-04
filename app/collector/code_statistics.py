@@ -6,6 +6,7 @@ from app.collector.source_files import count_text_lines, iter_source_files
 LANGUAGES = {
     '.py': 'Python', '.java': 'Java', '.js': 'JavaScript', '.jsx': 'JavaScript',
     '.mjs': 'JavaScript', '.cjs': 'JavaScript', '.ts': 'TypeScript', '.tsx': 'TypeScript',
+    '.mts': 'TypeScript', '.cts': 'TypeScript',
     '.go': 'Go', '.rs': 'Rust', '.c': 'C', '.h': 'C', '.cpp': 'C++', '.hpp': 'C++',
     '.cc': 'C++', '.cs': 'C#', '.rb': 'Ruby', '.php': 'PHP', '.kt': 'Kotlin',
     '.kts': 'Kotlin', '.swift': 'Swift', '.scala': 'Scala', '.sh': 'Shell',

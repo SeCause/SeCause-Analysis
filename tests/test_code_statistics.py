@@ -85,3 +85,12 @@ class CodeStatisticsTest(unittest.TestCase):
             (root / 'binary.ts').write_bytes(b'\x00binary')
             self.assertEqual(detect_codeql_languages(root), [])
             self.assertEqual(collect_code_details(root).file_count, 0)
+
+    def test_typescript_module_extensions_count_as_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'module.mts').write_text('export const safe = true;\n')
+            (root / 'common.cts').write_text('export const id = 1;')
+            self.assertEqual(collect_code_details(root).model_dump(by_alias=True), {
+                'fileCount': 2, 'lineCount': 2, 'languages': ['TypeScript'],
+            })
