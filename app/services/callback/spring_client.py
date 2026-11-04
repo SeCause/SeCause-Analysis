@@ -9,6 +9,7 @@ from pydantic import ConfigDict, Field
 
 from app.schemas.base import CamelModel, to_camel
 from app.schemas.finding import Finding
+from app.schemas.code_details import CodeDetails
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class AnalysisSuccessCallbackPayload(CallbackPayload):
     repository_id: int
     status: AnalysisStatus = AnalysisStatus.COMPLETED
     findings: list[Finding] = Field(default_factory=list)
+    code_details: CodeDetails = Field(default_factory=CodeDetails)
     summary: AnalysisSummary
     failed_scanners: list[str] = Field(default_factory=list)
 
@@ -81,10 +83,13 @@ class SpringCallbackClient:
     # 분석 성공 payload를 Spring callback API로 전송
     def send_success(self, payload: AnalysisSuccessCallbackPayload) -> None:
         logger.info(
-            "Sending Spring success callback. analysis_id=%s repository_id=%s finding_count=%s",
+            "Sending Spring success callback. analysis_id=%s repository_id=%s finding_count=%s fix_example_count=%s findings_with_fix_code=%s",
             payload.analysis_id,
             payload.repository_id,
             len(payload.findings),
+            sum(len(finding.fix_examples) for finding in payload.findings),
+            sum(any(example.fixed_code.strip() for example in finding.fix_examples)
+                for finding in payload.findings),
         )
         self._post_callback(
             _format_callback_path(self.success_path, payload.analysis_id),

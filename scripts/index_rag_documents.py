@@ -86,7 +86,10 @@ def load_documents(raw_root: Path, source: str) -> list[RagSourceDocument]:
     documents: list[RagSourceDocument] = []
 
     if source in {"all", "owasp"}:
-        documents.extend(load_owasp_documents(raw_root / "owasp"))
+        owasp_documents = load_owasp_documents(raw_root / "owasp")
+        if not owasp_documents:
+            raise FileNotFoundError(f"No indexable OWASP Markdown documents under {raw_root / 'owasp'}")
+        documents.extend(owasp_documents)
 
     if source in {"all", "cwe"}:
         documents.extend(load_cwe_documents(raw_root / "cwe" / "cwe.xml"))

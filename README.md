@@ -154,3 +154,37 @@ SeCause-Analysis/
 [Website](https://www.secause.site) · [Organization](https://github.com/SeCause) · [Frontend](https://github.com/SeCause/SeCause-FE) · [Backend](https://github.com/SeCause/SeCause-BE) · [Analysis](https://github.com/SeCause/SeCause-Analysis)
 
 </div>
+
+## 로컬 통합 테스트
+
+`SeCause-Analysis`, `SeCause-BE`, `SeCause-FE`를 같은 부모 디렉터리에 두고 Docker Desktop을 실행합니다. 다른 경로는 `.env.local-stack`의 `BACKEND_DIR`, `FRONTEND_DIR`로 지정할 수 있습니다.
+
+```bash
+./scripts/local-stack.sh init
+```
+
+기존 Analysis `.env`에는 실제 `CLAUDE_API_KEY`, `OPENAI_API_KEY`를 설정하고, 생성된 `.env.local-stack`에는 로컬 GitHub OAuth 앱의 `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`을 입력합니다. OAuth 콜백은 `http://localhost:3000/login/callback`입니다. `.env.local-stack`은 Git에서 제외됩니다.
+
+```bash
+./scripts/local-stack.sh up
+# 처음 한 번: 실제 RAG 검색에 사용할 원문과 임베딩 준비
+./scripts/local-stack.sh prepare-rag
+./scripts/local-stack.sh index-rag
+```
+
+OWASP만 확인할 때는 `./scripts/local-stack.sh index-rag --source owasp --dry-run`으로 실행할 수 있습니다. `--raw-root`도 그대로 색인기에 전달되며 경로는 컨테이너 내부 기준입니다(기본 `/app/rag_documents/raw`). 선택한 소스의 원문만 검사하고, 원문이 없으면 색인을 중단합니다. 새 OWASP 다운로드는 전체 복사가 끝난 뒤 폴더를 교체하므로 실패 후 재실행할 수 있으며, 기존에 직접 준비한 문서는 유지합니다.
+
+`up`은 PostgreSQL(pgvector), Redis, 분석 API, RQ worker, 백엔드, 프론트를 준비 순서에 맞춰 실행합니다. 처음에는 이미지·Gradle·pnpm 의존성 다운로드가 필요하고 이후에는 캐시를 재사용합니다. `index-rag`는 실제 임베딩 API를 호출합니다. 빈 DB에서 색인 없이 분석하면 운영과 같은 RAG 근거를 사용할 수 없습니다. 원문이 이미 있다면 `prepare-rag`는 기존 파일을 유지합니다.
+
+프론트에는 `NEXT_PUBLIC_USE_REPOSITORY_MOCK=false`를 명시합니다. 이 스위치를 지원하는 FE 체크아웃에서도 실제 API 결과를 사용하도록 하기 위한 설정입니다. 브라우저에서 `http://localhost:3000`에 접속해 로그인 후 실제 저장소를 분석합니다. 백엔드는 `8080`, 분석 API는 `8001`, 테스트 DB는 `15434` 포트를 사용하며 모두 localhost에만 공개됩니다. 테스트 DB 포트는 `LOCAL_DB_PORT`로 변경할 수 있습니다. 내부 통신과 토큰은 로컬 전용 값으로 맞춰지고 기존 외부 DB·콜백 주소는 사용하지 않습니다.
+
+```bash
+./scripts/local-stack.sh logs                 # worker 실시간 로그
+./scripts/local-stack.sh logs backend         # 백엔드 로그
+./scripts/local-stack.sh restart              # 분석 코드 수정 후 worker 재시작
+./scripts/local-stack.sh restart analysis-api # API 코드 수정 후 재시작
+./scripts/local-stack.sh status
+./scripts/local-stack.sh down                 # 종료; DB·색인·캐시 유지
+```
+
+Semgrep은 분석 이미지에 포함됩니다. CodeQL CLI는 포함되지 않으므로 기본 구성에서는 CodeQL 실패가 `failedScanners`에 기록되고 Semgrep 결과로 분석을 진행합니다. 운영과 동일한 CodeQL 분석까지 비교하려면 호환되는 CodeQL CLI·query pack을 별도로 구성해야 합니다. `down`은 볼륨을 삭제하지 않습니다. 기존 분석 결과는 재시작이나 코드 수정으로 보정되지 않으므로 새 분석 결과를 확인합니다.

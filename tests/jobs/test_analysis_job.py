@@ -219,8 +219,44 @@ class AnalysisJobTest(unittest.TestCase):
         callback.send_failure.assert_not_called()
         body = callback.send_success.call_args.args[0].model_dump(by_alias=True)
         self.assertEqual(body["summary"]["totalCount"], 1)
+        self.assertEqual(body["codeDetails"], {"fileCount": 42, "lineCount": 1000, "languages": ["Python"]})
         self.assertEqual(body["findings"][0]["fixExamples"], [])
         self.assertTrue(body["findings"][0]["recommendation"])
+
+    def test_real_repository_statistics_reach_callback_independently_of_findings(self):
+        import tempfile
+        from pathlib import Path
+        from app.collector.code_statistics import collect_code_details
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "src/example.py").write_text("unsafe()\n# comment\n\n")
+            (root / "src/clean.ts").write_text("const safe: boolean = true;")
+            (root / "node_modules").mkdir()
+            (root / "node_modules/ignored.js").write_text("ignored();")
+            for count in [0, 1]:
+                runner = Mock(tool=FindingTool.SEMGREP)
+                runner.run.return_value = [build_raw_finding("ISSUE", 1)] * count
+                with self.subTest(finding_count=count), self.pipeline_patches([runner]) as callback, patch(
+                    "app.jobs.analysis_job.shallow_clone_repository", return_value=str(root)
+                ), patch(
+                    "app.jobs.analysis_job.collect_code_details", side_effect=collect_code_details
+                ) as collect, patch(
+                    "app.jobs.analysis_job.search_evidence_for_findings", return_value=[[]] * count
+                ), patch(
+                    "app.jobs.analysis_job.enrich_finding_with_explanation",
+                    side_effect=lambda finding, _, **kwargs: finding,
+                ):
+                    run_analysis_job(self.payload)
+                collect.assert_called_once_with(str(root))
+                body = callback.send_success.call_args.args[0].model_dump(by_alias=True, mode="json")
+                self.assertEqual(body["codeDetails"], {
+                    "fileCount": 2, "lineCount": 4, "languages": ["Python", "TypeScript"],
+                })
+                self.assertEqual(body["summary"]["totalCount"], count)
+                self.assertEqual(len(body["findings"]), count)
+                callback.send_failure.assert_not_called()
 
     def test_missing_analysis_id_skips_failure_callback(self):
         callback = Mock()
@@ -252,6 +288,9 @@ class AnalysisJobTest(unittest.TestCase):
         stack.enter_context(
             patch("app.jobs.analysis_job.shallow_clone_repository", return_value="/tmp/repository")
         )
+        from app.schemas.code_details import CodeDetails
+        stack.enter_context(patch("app.jobs.analysis_job.collect_code_details",
+                                  return_value=CodeDetails(file_count=42, line_count=1000, languages=["Python"])))
         stack.enter_context(patch("app.jobs.analysis_job.cleanup_repository"))
         stack.enter_context(patch("app.jobs.analysis_job.delete_github_token_reference"))
         stack.enter_context(

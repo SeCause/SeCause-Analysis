@@ -151,6 +151,7 @@ def _valid_tree(root, language: str | None = None) -> bool:
             "local_variable_declaration", "lexical_declaration", "variable_declaration",
             "class_declaration", "function_declaration", "method_declaration",
             "import_statement", "import_declaration", "export_statement",
+            "type_alias_declaration", "interface_declaration", "enum_declaration",
         }:
             meaningful = True
         stack.extend(node.named_children)
