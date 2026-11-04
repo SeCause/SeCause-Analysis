@@ -34,7 +34,7 @@ services:
       - ./scripts/local/init-db.sh:/docker-entrypoint-initdb.d/10-secause.sh:ro
       - ${BACKEND_DIR:-../SeCause-BE}/src/main/resources/schema.sql:/backend-schema.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U secause -d secause']
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U secause -d secause']
       interval: 3s
       timeout: 3s
       retries: 30
