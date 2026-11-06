@@ -32,6 +32,12 @@ def parse_sarif_file(
     except json.JSONDecodeError as exc:
         raise AnalyzerError("Failed to parse CodeQL SARIF output") from exc
 
+    return parse_sarif_payload(payload, language)
+
+
+def parse_sarif_payload(
+    payload: object, language: CodeQLLanguage | None = None,
+) -> list[RawFinding]:
     if not isinstance(payload, dict):
         raise AnalyzerError("Invalid CodeQL SARIF output: root must be an object")
 
@@ -88,7 +94,7 @@ def build_sarif_rule_map(run: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def convert_sarif_result(
     result: dict[str, Any],
     rules: dict[str, dict[str, Any]],
-    language: CodeQLLanguage,
+    language: CodeQLLanguage | None,
     uri_bases: dict[str, Any] | None = None,
 ) -> RawFinding:
     if not isinstance(result, dict):
@@ -113,7 +119,7 @@ def convert_sarif_result(
         line_end=get_region_line(region, "endLine"),
         evidence=get_region_snippet(region),
         metadata={
-            "language": language.name,
+            **({"language": language.name} if language is not None else {}),
             "partial_fingerprints": result.get("partialFingerprints", {}),
             "codeql_properties": properties,
             "rule_properties": rule_properties,
