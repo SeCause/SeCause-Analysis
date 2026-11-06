@@ -166,7 +166,12 @@ class AnalysisJobTest(unittest.TestCase):
         self.assertEqual(callback.method_calls[-1][0], "send_success")
 
     def test_stub_infra_runner_is_not_registered(self):
-        registered_tools = [runner.tool for runner in get_analyzer_runners()]
+        from pydantic import SecretStr
+
+        registered_tools = [
+            runner.tool
+            for runner in get_analyzer_runners("https://github.com/example/demo.git", SecretStr("test"))
+        ]
 
         self.assertEqual(
             registered_tools,
