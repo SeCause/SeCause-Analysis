@@ -1,6 +1,8 @@
 import logging
 from typing import Any, Callable
 
+from pydantic import SecretStr
+
 from app.collector.code_statistics import collect_code_details
 from app.collector.git_collector import cleanup_repository, shallow_clone_repository
 from app.jobs.secret_store import (
@@ -20,7 +22,10 @@ from app.services.normalizer.deduplicator import deduplicate_findings
 from app.services.normalizer.finding_normalizer import normalize_findings
 from app.services.rag.hybrid_search import search_evidence_for_findings
 from app.services.scanner.base import AnalyzerContext, AnalyzerRunner, RawFinding
-from app.services.scanner.codeql_runner import CodeQLRunner
+from app.services.scanner.github_code_scanning_runner import (
+    CodeQLAnalysisUnavailable,
+    GitHubCodeScanningRunner,
+)
 from app.services.scanner.semgrep_runner import SemgrepRunner
 
 logger = logging.getLogger(__name__)
@@ -104,7 +109,9 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
 
         #추후 runner 내부 조정 필요
         progress.report(CLONE_PROGRESS, "clone")
-        raw_findings = run_analyzers(context, lambda value: progress.report(value, "scanner"))
+        raw_findings = run_analyzers(
+            context, github_token, lambda value: progress.report(value, "scanner"),
+        )
         context.raw_findings = [finding.model_dump() for finding in raw_findings] #원본
         context.normalized_findings = normalize_findings(raw_findings, repo_root=context.repo_path) #정규화 후
         context.normalized_findings = deduplicate_findings(context.normalized_findings) #중복
@@ -223,6 +230,7 @@ def cleanup_github_token_reference(
 # 등록된 analyzer runner stub을 순서대로 실행해 raw finding을 수집
 def run_analyzers(
     context: AnalysisJobContext,
+    github_token: SecretStr,
     report_progress: Callable[[int], None] | None = None,
 ) -> list[RawFinding]:
     analyzer_context = AnalyzerContext.from_pipeline_context(context)
@@ -230,7 +238,7 @@ def run_analyzers(
     raw_findings: list[RawFinding] = []
     successful_scanner_count = 0
 
-    runners = get_analyzer_runners()
+    runners = get_analyzer_runners(context.repository_url, github_token)
     for runner_index, runner in enumerate(runners, start=1):
         logger.info(
             "Analysis stage started. stage=%s analysis_id=%s",
@@ -240,6 +248,10 @@ def run_analyzers(
         try:
             raw_findings.extend(runner.run(repo_path, analyzer_context))
             successful_scanner_count += 1
+        except CodeQLAnalysisUnavailable as exc:
+            context.failed_scanners.append(summarize_scanner_error(runner, exc))
+            logger.info("CodeQL analysis unavailable. analysis_id=%s", context.analysis_id)
+            continue
         except Exception as exc:
             error_summary = summarize_scanner_error(runner, exc)
             context.failed_scanners.append(error_summary)
@@ -275,10 +287,10 @@ def summarize_scanner_error(runner: AnalyzerRunner, exc: Exception) -> str:
 
 
 # pipeline에서 사용할 analyzer runner 목록을 제공
-def get_analyzer_runners() -> list[AnalyzerRunner]:
+def get_analyzer_runners(repository_url: str, github_token: SecretStr) -> list[AnalyzerRunner]:
     return [
         SemgrepRunner(),
-        CodeQLRunner(),
+        GitHubCodeScanningRunner(repository_url, github_token),
     ]
 
 
