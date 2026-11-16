@@ -112,9 +112,8 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         raw_findings = run_analyzers(
             context, github_token, lambda value: progress.report(value, "scanner"),
         )
-        context.raw_findings = [finding.model_dump() for finding in raw_findings] #원본
-        context.normalized_findings = normalize_findings(raw_findings, repo_root=context.repo_path) #정규화 후
-        context.normalized_findings = deduplicate_findings(context.normalized_findings) #중복
+        context.normalized_findings = normalize_findings(raw_findings, repo_root=context.repo_path)
+        context.normalized_findings = deduplicate_findings(context.normalized_findings)
 
         progress.report(NORMALIZE_PROGRESS, "normalize_deduplicate")
         evidence_by_finding = search_evidence_for_findings(
