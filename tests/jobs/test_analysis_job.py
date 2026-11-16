@@ -4,13 +4,22 @@ import httpx
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, Mock, patch
 
+from pydantic import SecretStr
+
 from app.jobs.analysis_job import (
+    MAX_SCANNER_ERROR_SUMMARY_CHARS,
     AllAnalyzersFailedError,
     AnalysisProgressReporter,
+    build_failure_callback_payload,
+    build_success_callback_payload,
+    create_pipeline_context,
     get_analyzer_runners,
     run_analysis_job,
+    run_analyzers,
+    summarize_scanner_error,
 )
 from app.schemas.finding import FindingSeverity, FindingTool
+from app.services.normalizer.finding_normalizer import normalize_findings
 from app.services.callback.spring_client import SpringCallbackError
 from app.services.scanner.base import AnalyzerError, RawFinding
 
@@ -281,6 +290,124 @@ class AnalysisJobTest(unittest.TestCase):
         callback.send_failure.assert_not_called()
         self.assertIn("analysis_id is missing", logs.output[0])
 
+    def test_pipeline_run_invokes_every_patched_collaborator(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = []
+        with self.pipeline_patches([runner]) as callback, self.collaborator_mocks() as collaborators:
+            run_analysis_job(self.payload)
+        uncalled = sorted(name for name, mock in collaborators.items() if not mock.called)
+        self.assertEqual(uncalled, [])
+        self.assertEqual(callback.method_calls[-1][0], "send_success")
+
+    def test_cleanup_repository_runs_before_token_reference(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = []
+        order = []
+        with self.pipeline_patches([runner]), patch(
+            "app.jobs.analysis_job.cleanup_repository", side_effect=lambda *_: order.append("repository"),
+        ), patch(
+            "app.jobs.analysis_job.delete_github_token_reference", side_effect=lambda *_: order.append("token"),
+        ):
+            run_analysis_job(self.payload)
+        self.assertEqual(order, ["repository", "token"])
+
+    def test_token_reference_is_deleted_even_when_repository_cleanup_fails(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+        runner.run.return_value = []
+        with self.pipeline_patches([runner]), patch(
+            "app.jobs.analysis_job.cleanup_repository", side_effect=OSError("disk busy"),
+        ), patch(
+            "app.jobs.analysis_job.delete_github_token_reference",
+        ) as delete_token, self.assertLogs("app.jobs.analysis_job", level="WARNING"):
+            run_analysis_job(self.payload)
+        delete_token.assert_called_once_with("token-reference")
+
+    def test_create_pipeline_context_maps_every_payload_field(self):
+        context = create_pipeline_context(self.payload)
+
+        self.assertEqual(context.analysis_id, 11)
+        self.assertEqual(context.repository_id, 22)
+        self.assertEqual(context.branch, "main")
+        self.assertEqual(context.github_token_reference, "token-reference")
+        self.assertIsNone(context.repo_path)
+
+    def test_summarize_scanner_error_names_tool_and_exception_within_limit(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+
+        summary = summarize_scanner_error(runner, AnalyzerError("x" * 900))
+
+        self.assertTrue(summary.startswith("SEMGREP: AnalyzerError: "))
+        self.assertEqual(len(summary), MAX_SCANNER_ERROR_SUMMARY_CHARS)
+
+    def test_summarize_scanner_error_describes_exception_without_message(self):
+        runner = Mock(tool=FindingTool.SEMGREP)
+
+        summary = summarize_scanner_error(runner, AnalyzerError(""))
+
+        self.assertEqual(summary, "SEMGREP: AnalyzerError: no error details")
+
+    def test_run_analyzers_reports_progress_once_per_runner(self):
+        context = create_pipeline_context(self.payload)
+        context.repo_path = "/tmp/repository"
+        first = Mock(tool=FindingTool.SEMGREP)
+        first.run.return_value = [build_raw_finding("FIRST", 10)]
+        second = Mock(tool=FindingTool.CODEQL)
+        second.run.side_effect = AnalyzerError("codeql missing")
+        reported = []
+        with patch("app.jobs.analysis_job.get_analyzer_runners", return_value=[first, second]):
+            findings = run_analyzers(context, SecretStr("token"), reported.append)
+
+        self.assertEqual([finding.type for finding in findings], ["FIRST"])
+        self.assertEqual(reported, [30, 50])
+        self.assertEqual(len(context.failed_scanners), 1)
+        self.assertTrue(context.failed_scanners[0].startswith("CODEQL: AnalyzerError: "))
+
+    def test_build_success_callback_payload_counts_enriched_findings(self):
+        context = create_pipeline_context(self.payload)
+        context.enriched_findings = normalize_findings([build_raw_finding("FIRST", 10)])
+        context.failed_scanners = ["CODEQL: AnalyzerError: missing"]
+
+        payload = build_success_callback_payload(context)
+
+        self.assertEqual(payload.analysis_id, 11)
+        self.assertEqual(payload.summary.total_count, 1)
+        self.assertEqual(payload.failed_scanners, ["CODEQL: AnalyzerError: missing"])
+
+    def test_build_failure_callback_payload_separates_callback_stage(self):
+        context = create_pipeline_context(self.payload)
+
+        pipeline = build_failure_callback_payload(context, self.payload, AnalyzerError("clone failed"))
+        callback = build_failure_callback_payload(context, self.payload, SpringCallbackError("gateway down"))
+
+        self.assertEqual(pipeline.failed_stage, "PIPELINE")
+        self.assertEqual(pipeline.error_code, "AnalyzerError")
+        self.assertEqual(callback.failed_stage, "CALLBACK")
+
+    def test_build_failure_callback_payload_falls_back_to_raw_payload(self):
+        payload = build_failure_callback_payload(None, self.payload, AnalyzerError("early failure"))
+
+        self.assertEqual(payload.analysis_id, 11)
+        self.assertEqual(payload.repository_id, 22)
+
+    def collaborator_mocks(self):
+        stack = ExitStack()
+        mocks = {}
+        for name in [
+            "resolve_github_token_reference",
+            "shallow_clone_repository",
+            "collect_code_details",
+            "search_evidence_for_findings",
+            "cleanup_repository",
+            "delete_github_token_reference",
+        ]:
+            mocks[name] = stack.enter_context(patch(f"app.jobs.analysis_job.{name}"))
+        from app.schemas.code_details import CodeDetails
+        mocks["shallow_clone_repository"].return_value = "/tmp/repository"
+        mocks["resolve_github_token_reference"].return_value = "token"
+        mocks["collect_code_details"].return_value = CodeDetails()
+        mocks["search_evidence_for_findings"].return_value = []
+        return _CollaboratorMocks(stack, mocks)
+
     def pipeline_patches(self, runners):
         stack = ExitStack()
         callback = Mock()
@@ -302,6 +429,19 @@ class AnalysisJobTest(unittest.TestCase):
             patch("app.jobs.analysis_job.get_analyzer_runners", return_value=runners)
         )
         return _CallbackPatchContext(stack, callback)
+
+
+class _CollaboratorMocks:
+    def __init__(self, stack: ExitStack, mocks: dict):
+        self.stack = stack
+        self.mocks = mocks
+
+    def __enter__(self):
+        self.stack.__enter__()
+        return self.mocks
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self.stack.__exit__(exc_type, exc_value, traceback)
 
 
 class _CallbackPatchContext:
