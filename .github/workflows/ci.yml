@@ -26,15 +26,22 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
-     #테스트 통과를 위한 더미 값
+     # app.core.config가 import 시점에 Settings()를 생성하므로 더미 값이 필요하다
       - name: Compile Python files
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/secause
           CLAUDE_API_KEY: test-key
           REDIS_URL: redis://localhost:6379/0
         run: python -m compileall app
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/secause
+          CLAUDE_API_KEY: test-key
+          REDIS_URL: redis://localhost:6379/0
+        run: python -m pytest tests/ -q
 
       - name: Build Docker image
         run: docker build -t secause-analysis:test .
