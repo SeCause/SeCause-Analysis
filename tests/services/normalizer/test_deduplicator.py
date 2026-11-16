@@ -15,7 +15,7 @@ class DeduplicatorTest(unittest.TestCase):
 
         deduplicated = deduplicate_findings(findings)
 
-        self.assertEqual(len(deduplicated), 99)
+        self.assertEqual(len(deduplicated), 2)
 
     def test_build_deduplication_key_prefers_cwe_over_type(self):
         semgrep = build_finding("CWE-89", "SQL_INJECTION", " src/db.py ", 10)
