@@ -145,8 +145,8 @@ def collect_findings(
     raw_findings = run_analyzers(
         context, github_token, lambda value: progress.report(value, "scanner"),
     )
-    normalized = normalize_findings(raw_findings, repo_root=context.repo_path)
-    context.normalized_findings = deduplicate_findings(normalized)
+    context.normalized_findings = normalize_findings(raw_findings, repo_root=context.repo_path)
+    context.normalized_findings = deduplicate_findings(context.normalized_findings)
 
 
 # Finding 별 근거 문서를 검색한다. 반환 순서는 normalized_findings 와 같다
