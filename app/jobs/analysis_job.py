@@ -20,7 +20,7 @@ from app.services.callback.spring_client import (
 from app.services.llm.explanation_generator import enrich_finding_with_explanation
 from app.services.normalizer.deduplicator import deduplicate_findings
 from app.services.normalizer.finding_normalizer import normalize_findings
-from app.services.rag.hybrid_search import search_evidence_for_findings
+from app.services.rag.hybrid_search import EvidenceDocument, search_evidence_for_findings
 from app.services.scanner.base import AnalyzerContext, AnalyzerRunner, RawFinding
 from app.services.scanner.github_code_scanning_runner import (
     CodeQLAnalysisUnavailable,
@@ -84,118 +84,168 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         context = create_pipeline_context(payload)
         progress = AnalysisProgressReporter(callback_client, context.analysis_id)
-        #토큰이 유효한지 검사
         github_token = resolve_github_token_reference(context.github_token_reference)
+        log_pipeline_started(context)
 
-        logger.info(
-            "Analysis pipeline started. analysis_id=%s repository_id=%s repository_url=%s branch=%s",
-            context.analysis_id,
-            context.repository_id,
-            context.repository_url,
-            context.branch,
-        )
-
-        # 분석기가 실제로 검사할 repository 경로 생성
-        context.repo_path = str(
-            shallow_clone_repository(
-                context.repository_url,
-                context.branch,
-                github_token,
-                context.analysis_id,
-            )
-        )
-
-        context.code_details = collect_code_details(context.repo_path)
+        prepare_repository(context, github_token)
+        progress.report(CLONE_PROGRESS, "clone")
 
         #추후 runner 내부 조정 필요
-        progress.report(CLONE_PROGRESS, "clone")
-        raw_findings = run_analyzers(
-            context, github_token, lambda value: progress.report(value, "scanner"),
-        )
-        context.normalized_findings = normalize_findings(raw_findings, repo_root=context.repo_path)
-        context.normalized_findings = deduplicate_findings(context.normalized_findings)
-
+        collect_findings(context, github_token, progress)
         progress.report(NORMALIZE_PROGRESS, "normalize_deduplicate")
-        evidence_by_finding = search_evidence_for_findings(
-            context.normalized_findings,
-            analysis_id=context.analysis_id,
-            on_progress=lambda done, total: progress.report(
-                NORMALIZE_PROGRESS + RAG_WEIGHT * done // total, "rag"
-            ),
-        )
 
+        evidence_by_finding = search_finding_evidence(context, progress)
         progress.report(RAG_PROGRESS, "rag")
 
-        #LLM 설명 추가
-        context.enriched_findings = []
-        finding_total = len(context.normalized_findings)
-        for finding_index, (finding, evidence_documents) in enumerate(
-            zip(context.normalized_findings, evidence_by_finding),
-            start=1,
-        ):
-            logger.info(
-                "Finding enrichment started. analysis_id=%s finding_index=%s finding_total=%s tool=%s type=%s",
-                context.analysis_id,
-                finding_index,
-                finding_total,
-                finding.tool,
-                finding.type,
-            )
-            enriched_finding = enrich_finding_with_explanation(
-                finding,
-                evidence_documents,
-                repo_root=context.repo_path,
-            )
-            context.enriched_findings.append(enriched_finding)
-            progress.report(RAG_PROGRESS + LLM_WEIGHT * finding_index // finding_total, "llm")
-            logger.info(
-                "Finding enrichment completed. analysis_id=%s finding_index=%s finding_total=%s",
-                context.analysis_id,
-                finding_index,
-                finding_total,
-            )
+        enrich_findings(context, evidence_by_finding, progress)
 
         success_payload = build_success_callback_payload(context)
         progress.report(LLM_PROGRESS, "llm")
         callback_client.send_success(success_payload)
+        log_pipeline_completed(context)
 
-        logger.info(
-            "Analysis pipeline completed. analysis_id=%s finding_count=%s",
-            context.analysis_id,
-            len(context.enriched_findings),
-        )
-
-        return {
-            "analysis_id": context.analysis_id,
-            "repository_id": context.repository_id,
-            "status": "COMPLETED",
-            "finding_count": len(context.enriched_findings),
-        }
+        return build_job_result(context)
     except Exception as exc:
-        failure_payload = build_failure_callback_payload(context, payload, exc)
-        if failure_payload.analysis_id is None:
-            logger.exception(
-                "Skipping Spring failure callback because analysis_id is missing"
-            )
-        else:
-            try:
-                callback_client.send_failure(failure_payload)
-            except SpringCallbackError:
-                logger.exception(
-                    "Failed to send Spring failure callback. analysis_id=%s",
-                    failure_payload.analysis_id,
-                )
+        send_failure_callback(callback_client, context, payload, exc)
         raise
     finally:
-        try:
-            cleanup_repository(context.repo_path if context is not None else None)
-        except Exception:
-            logger.warning(
-                "Failed to cleanup repository. analysis_id=%s",
-                context.analysis_id if context is not None else payload.get("analysis_id"),
-            )
-        finally:
-            cleanup_github_token_reference(context, payload)
+        cleanup_pipeline(context, payload)
+
+
+def log_pipeline_started(context: AnalysisJobContext) -> None:
+    logger.info(
+        "Analysis pipeline started. analysis_id=%s repository_id=%s repository_url=%s branch=%s",
+        context.analysis_id,
+        context.repository_id,
+        context.repository_url,
+        context.branch,
+    )
+
+
+def log_pipeline_completed(context: AnalysisJobContext) -> None:
+    logger.info(
+        "Analysis pipeline completed. analysis_id=%s finding_count=%s",
+        context.analysis_id,
+        len(context.enriched_findings),
+    )
+
+
+# clone 으로 분석 대상 경로를 만들고 전체 코드 통계를 수집한다
+def prepare_repository(context: AnalysisJobContext, github_token: SecretStr) -> None:
+    context.repo_path = str(
+        shallow_clone_repository(
+            context.repository_url,
+            context.branch,
+            github_token,
+            context.analysis_id,
+        )
+    )
+    context.code_details = collect_code_details(context.repo_path)
+
+
+# 스캐너를 실행하고 결과를 정규화한 뒤 중복을 제거한다
+def collect_findings(
+    context: AnalysisJobContext,
+    github_token: SecretStr,
+    progress: AnalysisProgressReporter,
+) -> None:
+    raw_findings = run_analyzers(
+        context, github_token, lambda value: progress.report(value, "scanner"),
+    )
+    context.normalized_findings = normalize_findings(raw_findings, repo_root=context.repo_path)
+    context.normalized_findings = deduplicate_findings(context.normalized_findings)
+
+
+# Finding 별 근거 문서를 검색한다. 반환 순서는 normalized_findings 와 같다
+def search_finding_evidence(
+    context: AnalysisJobContext,
+    progress: AnalysisProgressReporter,
+) -> list[list[EvidenceDocument]]:
+    return search_evidence_for_findings(
+        context.normalized_findings,
+        analysis_id=context.analysis_id,
+        on_progress=lambda done, total: progress.report(
+            NORMALIZE_PROGRESS + RAG_WEIGHT * done // total, "rag"
+        ),
+    )
+
+
+# Finding 별 LLM 설명을 생성해 enriched_findings 를 채운다
+def enrich_findings(
+    context: AnalysisJobContext,
+    evidence_by_finding: list[list[EvidenceDocument]],
+    progress: AnalysisProgressReporter,
+) -> None:
+    context.enriched_findings = []
+    finding_total = len(context.normalized_findings)
+    for finding_index, (finding, evidence_documents) in enumerate(
+        zip(context.normalized_findings, evidence_by_finding),
+        start=1,
+    ):
+        logger.info(
+            "Finding enrichment started. analysis_id=%s finding_index=%s finding_total=%s tool=%s type=%s",
+            context.analysis_id,
+            finding_index,
+            finding_total,
+            finding.tool,
+            finding.type,
+        )
+        enriched_finding = enrich_finding_with_explanation(
+            finding,
+            evidence_documents,
+            repo_root=context.repo_path,
+        )
+        context.enriched_findings.append(enriched_finding)
+        progress.report(RAG_PROGRESS + LLM_WEIGHT * finding_index // finding_total, "llm")
+        logger.info(
+            "Finding enrichment completed. analysis_id=%s finding_index=%s finding_total=%s",
+            context.analysis_id,
+            finding_index,
+            finding_total,
+        )
+
+
+# RQ 가 저장할 작업 결과를 만든다
+def build_job_result(context: AnalysisJobContext) -> dict[str, Any]:
+    return {
+        "analysis_id": context.analysis_id,
+        "repository_id": context.repository_id,
+        "status": "COMPLETED",
+        "finding_count": len(context.enriched_findings),
+    }
+
+
+# 실패를 Spring 에 알린다. analysis_id 를 모르면 보내지 않고 기록만 남긴다
+def send_failure_callback(
+    callback_client: SpringCallbackClient,
+    context: AnalysisJobContext | None,
+    payload: dict[str, Any],
+    exc: Exception,
+) -> None:
+    failure_payload = build_failure_callback_payload(context, payload, exc)
+    if failure_payload.analysis_id is None:
+        logger.exception("Skipping Spring failure callback because analysis_id is missing")
+        return
+    try:
+        callback_client.send_failure(failure_payload)
+    except SpringCallbackError:
+        logger.exception(
+            "Failed to send Spring failure callback. analysis_id=%s",
+            failure_payload.analysis_id,
+        )
+
+
+# clone 과 token reference 를 정리한다. 저장소 정리가 실패해도 token 은 반드시 지운다
+def cleanup_pipeline(context: AnalysisJobContext | None, payload: dict[str, Any]) -> None:
+    try:
+        cleanup_repository(context.repo_path if context is not None else None)
+    except Exception:
+        logger.warning(
+            "Failed to cleanup repository. analysis_id=%s",
+            context.analysis_id if context is not None else payload.get("analysis_id"),
+        )
+    finally:
+        cleanup_github_token_reference(context, payload)
 
 
 # RQ payload를 worker 내부 pipeline context로 변환
