@@ -85,13 +85,7 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         context = create_pipeline_context(payload)
         progress = AnalysisProgressReporter(callback_client, context.analysis_id)
         github_token = resolve_github_token_reference(context.github_token_reference)
-        logger.info(
-            "Analysis pipeline started. analysis_id=%s repository_id=%s repository_url=%s branch=%s",
-            context.analysis_id,
-            context.repository_id,
-            context.repository_url,
-            context.branch,
-        )
+        log_pipeline_started(context)
 
         prepare_repository(context, github_token)
         progress.report(CLONE_PROGRESS, "clone")
@@ -108,12 +102,7 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         success_payload = build_success_callback_payload(context)
         progress.report(LLM_PROGRESS, "llm")
         callback_client.send_success(success_payload)
-
-        logger.info(
-            "Analysis pipeline completed. analysis_id=%s finding_count=%s",
-            context.analysis_id,
-            len(context.enriched_findings),
-        )
+        log_pipeline_completed(context)
 
         return build_job_result(context)
     except Exception as exc:
@@ -121,6 +110,24 @@ def run_analysis_job(payload: dict[str, Any]) -> dict[str, Any]:
         raise
     finally:
         cleanup_pipeline(context, payload)
+
+
+def log_pipeline_started(context: AnalysisJobContext) -> None:
+    logger.info(
+        "Analysis pipeline started. analysis_id=%s repository_id=%s repository_url=%s branch=%s",
+        context.analysis_id,
+        context.repository_id,
+        context.repository_url,
+        context.branch,
+    )
+
+
+def log_pipeline_completed(context: AnalysisJobContext) -> None:
+    logger.info(
+        "Analysis pipeline completed. analysis_id=%s finding_count=%s",
+        context.analysis_id,
+        len(context.enriched_findings),
+    )
 
 
 # clone 으로 분석 대상 경로를 만들고 전체 코드 통계를 수집한다
